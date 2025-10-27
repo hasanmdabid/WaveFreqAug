@@ -1,0 +1,161 @@
+import torch
+import numpy as np
+from pytorch_wavelets import DWT1DForward, DWT1DInverse
+from PyEMD import EMD
+import pywt
+from numpy.fft import fft, ifft
+
+# Augmentation class
+class Augmentation:
+    @staticmethod
+    def freq_mask(
+        x: torch.Tensor, y: torch.Tensor, rate: float = 0.5, dim: int = 1
+    ) -> torch.Tensor:
+        xy = torch.cat([x, y], dim=dim)
+        xy_f = torch.fft.rfft(xy, dim=dim)
+        m = torch.rand(xy_f.shape, device=xy_f.device) < rate
+        freal = xy_f.real.masked_fill(m, 0)
+        fimag = xy_f.imag.masked_fill(m, 0)
+        xy_f = torch.complex(freal, fimag)
+        xy = torch.fft.irfft(xy_f, dim=dim)
+        return xy
+
+    @staticmethod
+    def freq_mix(
+        x: torch.Tensor, y: torch.Tensor, rate: float = 0.5, dim: int = 1
+    ) -> torch.Tensor:
+        xy = torch.cat([x, y], dim=dim)
+        xy_f = torch.fft.rfft(xy, dim=dim)
+        m = torch.rand(xy_f.shape, device=xy_f.device) < rate
+        amp = abs(xy_f)
+        _, index = amp.sort(dim=dim, descending=True)
+        dominant_mask = index > 2
+        m = torch.bitwise_and(m, dominant_mask)
+        freal = xy_f.real.masked_fill(m, 0)
+        fimag = xy_f.imag.masked_fill(m, 0)
+        b_idx = np.arange(x.shape[0])
+        np.random.shuffle(b_idx)
+        x2, y2 = x[b_idx], y[b_idx]
+        xy2 = torch.cat([x2, y2], dim=dim)
+        xy2_f = torch.fft.rfft(xy2, dim=dim)
+        m = torch.bitwise_not(m)
+        freal2 = xy2_f.real.masked_fill(m, 0)
+        fimag2 = xy2_f.imag.masked_fill(m, 0)
+        freal += freal2
+        fimag += fimag2
+        xy_f = torch.complex(freal, fimag)
+        xy = torch.fft.irfft(xy_f, dim=dim)
+        return xy
+
+    @staticmethod
+    def wave_mask(
+        x: torch.Tensor,
+        y: torch.Tensor,
+        rates: list,
+        wavelet: str = "db1",
+        level: int = 2,
+        dim: int = 1,
+    ) -> torch.Tensor:
+        xy = torch.cat([x, y], dim=1)
+        rate_tensor = torch.tensor(
+            rates[: level + 1], device=x.device
+        )  # Ensure rates match level
+        xy = xy.permute(0, 2, 1).to(x.device).to(torch.float64)
+        try:
+            dwt = (
+                DWT1DForward(J=level, wave=wavelet, mode="symmetric")
+                .to(x.device)
+                .double()
+            )
+        except:
+            print(f"Wavelet {wavelet} not supported, falling back to db1")
+            dwt = (
+                DWT1DForward(J=level, wave="db1", mode="symmetric")
+                .to(x.device)
+                .double()
+            )
+        cA, cDs = dwt(xy)
+        mask = torch.rand_like(cA).to(cA.device) < rate_tensor[0]
+        cA = cA.masked_fill(mask, 0)
+        masked_cDs = []
+        for i, cD in enumerate(cDs, 1):
+            mask_cD = torch.rand_like(cD).to(cD.device) < rate_tensor[i]
+            cD = cD.masked_fill(mask_cD, 0)
+            masked_cDs.append(cD)
+        try:
+            idwt = DWT1DInverse(wave=wavelet, mode="symmetric").to(x.device).double()
+        except:
+            idwt = DWT1DInverse(wave="db1", mode="symmetric").to(x.device).double()
+        reconstructed = idwt((cA, masked_cDs))
+        reconstructed = reconstructed.permute(0, 2, 1)
+        return reconstructed.float()
+
+    @staticmethod
+    def wave_mix(
+        x: torch.Tensor,
+        y: torch.Tensor,
+        rates: list,
+        wavelet: str = "db1",
+        level: int = 2,
+        dim: int = 1,
+    ) -> torch.Tensor:
+        xy = torch.cat([x, y], dim=1)
+        batch_size, _, _ = xy.shape
+        rate_tensor = torch.tensor(rates[: level + 1], device=x.device)
+        xy = xy.permute(0, 2, 1).to(x.device).to(torch.float64)
+        b_idx = torch.randperm(batch_size)
+        xy2 = xy[b_idx].to(torch.float64)
+        try:
+            dwt = (
+                DWT1DForward(J=level, wave=wavelet, mode="symmetric")
+                .to(x.device)
+                .double()
+            )
+        except:
+            print(f"Wavelet {wavelet} not supported, falling back to db1")
+            dwt = (
+                DWT1DForward(J=level, wave="db1", mode="symmetric")
+                .to(x.device)
+                .double()
+            )
+        cA1, cDs1 = dwt(xy)
+        cA2, cDs2 = dwt(xy2)
+        mask = torch.rand_like(cA1).to(cA1.device) < rate_tensor[0]
+        cA_mixed = cA1.masked_fill(mask, 0) + cA2.masked_fill(~mask, 0)
+        mixed_cDs = []
+        for i, (cD1, cD2) in enumerate(zip(cDs1, cDs2), 1):
+            mask = torch.rand_like(cD1).to(cD1.device) < rate_tensor[i]
+            cD_mixed = cD1.masked_fill(mask, 0) + cD2.masked_fill(~mask, 0)
+            mixed_cDs.append(cD_mixed)
+        try:
+            idwt = DWT1DInverse(wave=wavelet, mode="symmetric").to(x.device).double()
+        except:
+            idwt = DWT1DInverse(wave="db1", mode="symmetric").to(x.device).double()
+        reconstructed = idwt((cA_mixed, mixed_cDs))
+        reconstructed = reconstructed.permute(0, 2, 1)
+        return reconstructed.float()
+
+    @staticmethod
+    def emd_aug(x: torch.Tensor) -> torch.Tensor:
+        b, n_imf, t, c = x.size()
+        inp = x.permute(0, 2, 1, 3).reshape(b, t, n_imf * c)
+        if torch.rand(1) >= 0.5:
+            w = 2 * torch.rand((b, 1, n_imf * c)).to(x.device)
+        else:
+            w = torch.ones((b, 1, n_imf * c)).to(x.device)
+        w_exp = w.expand(-1, t, -1)
+        out = w_exp * inp
+        out = out.reshape(b, t, n_imf, c).sum(dim=2)
+        return out
+
+    @staticmethod
+    def mix_aug(
+        batch_x: torch.Tensor, batch_y: torch.Tensor, lambd: float = 0.5
+    ) -> tuple:
+        inds2 = torch.randperm(batch_x.shape[0])
+        lam = np.random.beta(lambd, lambd)
+        batch_x = lam * batch_x[inds2] + (1 - lam) * batch_x
+        batch_y = lam * batch_y[inds2] + (1 - lam) * batch_y
+        return batch_x, batch_y
+
+    
