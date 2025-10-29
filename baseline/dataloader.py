@@ -1,3 +1,9 @@
+# =============================================================================
+# The code is originated from
+# Chen, M., Xu, Z., Zeng, A., & Xu, Q. (2023). "FrAug: Frequency Domain Augmentation for Time Series Forecasting".
+# arXiv preprint arXiv:2302.09292.
+# =============================================================================
+
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler

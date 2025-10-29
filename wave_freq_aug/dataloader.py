@@ -1,3 +1,11 @@
+
+# =========================================================================================
+# This script is written and organized by Md Abid Hasan towards the project WaveFreqAug.
+# This module defines a PyTorch Dataset class for time series data handling, including
+# data loading, normalization, and indexing for training, validation, and testing.
+# =========================================================================================
+
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
@@ -12,6 +20,7 @@ class TimeSeriesDataset(Dataset):
         seq_len=336,
         label_len=0,
         pred_len=96,
+        enc_in=7,
     ):
         self.seq_len = seq_len
         self.label_len = label_len
@@ -21,11 +30,12 @@ class TimeSeriesDataset(Dataset):
         type_map = {"train": 0, "val": 1, "test": 2}
         self.set_type = type_map[flag]
         self.data_path = data_path
+        self.enc_in = enc_in
         self.__read_data__()
 
     def __read_data__(self):
         df_raw = pd.read_csv(self.data_path)
-        cols_data = df_raw.columns[1:]
+        cols_data = df_raw.columns[1:]  # Multivariate, all features
         df_data = df_raw[cols_data]
         self.scaler = StandardScaler()
 
@@ -40,13 +50,20 @@ class TimeSeriesDataset(Dataset):
                 12 * 30 * 24 + 4 * 30 * 24,
                 12 * 30 * 24 + 8 * 30 * 24,
             ]
-        elif self.data_name in ["weather", "ILI"]:
+        elif self.data_name == "ILI":
+            border1s = [0, 676 - self.seq_len, 676 + 97 - self.seq_len]
+            border2s = [676, 676 + 97, 676 + 97 + 193]
+        elif self.data_name == "weather":
             border1s = [
                 0,
-                int(0.6 * len(df_raw)) - self.seq_len,
-                int(0.8 * len(df_raw)) - self.seq_len,
+                int(0.7 * 52695) - self.seq_len,  # ~70% train
+                int(0.85 * 52695) - self.seq_len,  # ~15% val
             ]
-            border2s = [int(0.6 * len(df_raw)), int(0.8 * len(df_raw)), len(df_raw)]
+            border2s = [
+                int(0.7 * 52695),
+                int(0.85 * 52695),
+                52695,  # Total length ~52695 for Weather
+            ]
         else:
             raise ValueError(f"Unsupported data_name: {self.data_name}")
 
@@ -54,9 +71,8 @@ class TimeSeriesDataset(Dataset):
         border2 = border2s[self.set_type]
         train_data = df_data[border1s[0] : border2s[0]]
         self.scaler.fit(train_data.values)
-        data = self.scaler.transform(df_data.values)
-        self.data_x = data[border1:border2]
-        self.data_y = data[border1:border2]
+        self.data_x = self.scaler.transform(df_data.values)[border1:border2]
+        self.data_y = self.data_x  # Same data for input and target
 
     def __getitem__(self, index):
         s_begin = index

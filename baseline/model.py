@@ -1,26 +1,28 @@
+# =========================================================================================
+# This script is written and organized by Md Abid Hasan towards the project WaveFreqAug.
+# The DLinear and iTransformer models are adapted from the following sources:
+# =========================================================================================
+
+
 import torch
 import torch.nn as nn
 import numpy as np
-
+import torch.nn.functional as F
 
 # DLinear model
 class MovingAvg(nn.Module):
     def __init__(self, kernel_size, stride):
         super(MovingAvg, self).__init__()
         self.kernel_size = kernel_size
-        self.stride = stride
         self.avg = nn.AvgPool1d(kernel_size=kernel_size, stride=stride, padding=0)
 
     def forward(self, x):
-        seq_len = x.size(1)
-        padding = (self.kernel_size - 1) // 2
-        front = x[:, 0:1, :].repeat(1, padding, 1)
-        end = x[:, -1:, :].repeat(1, padding, 1)
-        x_padded = torch.cat([front, x, end], dim=1)
-        x_padded = x_padded.permute(0, 2, 1)
-        x_avg = self.avg(x_padded)
-        x_avg = x_avg.permute(0, 2, 1)
-        return x_avg
+        front = x[:, 0:1, :].repeat(1, (self.kernel_size - 1) // 2, 1)
+        end = x[:, -1:, :].repeat(1, (self.kernel_size - 1) // 2, 1)
+        x = torch.cat([front, x, end], dim=1)
+        x = self.avg(x.permute(0, 2, 1))
+        x = x.permute(0, 2, 1)
+        return x
 
 
 class SeriesDecomp(nn.Module):
@@ -138,17 +140,60 @@ class iTransformer(nn.Module):
 
         return x
 
+# SCINet model (adapted from https://github.com/cure-lab/SCINet)
+class SCIBlock(nn.Module):
+    def __init__(self, input_dim, hid_size, kernel_size=5, dropout=0.2):
+        super(SCIBlock, self).__init__()
+        self.input_dim = input_dim
+        self.hid_size = hid_size
+        self.kernel_size = kernel_size
+        self.dropout = dropout
+        self.conv1 = nn.Conv1d(input_dim, hid_size, kernel_size, padding=kernel_size//2)
+        self.conv2 = nn.Conv1d(input_dim, hid_size, kernel_size, padding=kernel_size//2)
+        self.fc = nn.Linear(hid_size, hid_size)
+        self.dropout = nn.Dropout(dropout)
+        self.norm = nn.LayerNorm(hid_size)
 
-# Metrics
-def RSE(pred, true):
-    return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(
-        np.sum((true - true.mean()) ** 2)
-    )
+    def forward(self, x):
+        # x: [batch_size, input_dim, seq_len]
+        x_even = x[:, :, ::2]  # Downsample: even indices
+        x_odd = x[:, :, 1::2]  # Downsample: odd indices
+        x_even = self.conv1(x_even)
+        x_odd = self.conv2(x_odd)
+        x_even = self.norm(x_even.permute(0, 2, 1)).permute(0, 2, 1)
+        x_odd = self.norm(x_odd.permute(0, 2, 1)).permute(0, 2, 1)
+        x_even = torch.tanh(x_even) * torch.sigmoid(x_odd)
+        x_odd = torch.tanh(x_odd) * torch.sigmoid(x_even)
+        x_even = self.dropout(self.fc(x_even.permute(0, 2, 1)).permute(0, 2, 1)) # type: ignore
+        x_odd = self.dropout(self.fc(x_odd.permute(0, 2, 1)).permute(0, 2, 1)) # type: ignore
+        return x_even, x_odd
 
+class SCINet(nn.Module):
+    def __init__(self, input_len, output_len, input_dim, hid_size=1, num_stacks=1, num_levels=3, kernel_size=5, dropout=0.2):
+        super(SCINet, self).__init__()
+        self.input_len = input_len
+        self.output_len = output_len
+        self.input_dim = input_dim
+        self.hid_size = hid_size
+        self.num_stacks = num_stacks
+        self.num_levels = num_levels
+        self.kernel_size = kernel_size
+        self.dropout = dropout
+        self.blocks = nn.ModuleList()
+        for stack in range(num_stacks):
+            for level in range(num_levels):
+                self.blocks.append(SCIBlock(input_dim if level == 0 else hid_size, hid_size, kernel_size, dropout))
+        self.fc = nn.Linear(input_len * hid_size, output_len * input_dim)
+        nn.init.xavier_uniform_(self.fc.weight)
 
-def MAE(pred, true):
-    return np.mean(np.abs(pred - true))
-
-
-def MSE(pred, true):
-    return np.mean((pred - true) ** 2)
+    def forward(self, x):
+        # x: [batch_size, seq_len, input_dim]
+        x = x.permute(0, 2, 1)  # [batch_size, input_dim, seq_len]
+        for block in self.blocks:
+            x_even, x_odd = block(x)
+            x = torch.cat([x_even, x_odd], dim=2)  # Concatenate even and odd features
+        x = x.permute(0, 2, 1)  # [batch_size, seq_len, hid_size]
+        x = x.reshape(x.size(0), -1)  # Flatten: [batch_size, seq_len * hid_size]
+        x = self.fc(x)  # [batch_size, output_len * input_dim]
+        x = x.reshape(x.size(0), self.output_len, self.input_dim)  # [batch_size, output_len, input_dim]
+        return x

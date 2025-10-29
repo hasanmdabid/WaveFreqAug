@@ -1,3 +1,8 @@
+# =======================================================================================================
+# This training and evaluation script is developed by Md Abid Hasan for the WaveFreqAug project.
+# It includes functions for training, validation, testing, early stopping, and learning rate adjustment.
+# =======================================================================================================
+
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast # type: ignore 

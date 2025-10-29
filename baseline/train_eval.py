@@ -1,3 +1,10 @@
+# =========================================================================================
+# This script is written and organized by Md Abid Hasan towards the project WaveFreqAug.
+# This is script for training and evaluating time series forecasting models with
+# various data augmentation techniques.
+# =========================================================================================
+
+
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast # type: ignore

@@ -1,4 +1,8 @@
-# Dataset configurations
+# =============================================================================
+# This script is written and organized by Md Abid Hasan towards the project WaveFreqAug.
+# The dataset parameters for different datasets and prediction lengths are specified here.
+# =============================================================================
+
 
 dataset_configs = {
     "ETTh1": {

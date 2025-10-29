@@ -1,3 +1,9 @@
+
+#====================================================================================================
+# This configuration file is created by Md Abid Hasan as part of the WaveFreqAug project.
+# It defines dataset-specific parameters for time series forecasting tasks.
+#====================================================================================================
+
 dataset_configs = {
     "ETTh1": {
         "data_path": "/home/abid/a_c_p/dataset/ETTh1.csv",

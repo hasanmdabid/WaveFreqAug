@@ -1,3 +1,15 @@
+# =============================================================================
+# The freq_mask, freq_mix methods are adapted from the following sources:
+#  Chen, M., Xu, Z., Zeng, A., & Xu, Q. (2023). "FrAug: Frequency Domain Augmentation for Time Series Forecasting".
+#  arXiv preprint arXiv:2302.09292.
+#
+# The emd_aug and mix_aug for STAug method are adapted from the following source:
+#  https://github.com/xiyuanzh/STAug/tree/main
+
+# The wave_mask and wave_mix methods are adopted from the following source:
+# https://github.com/jafarbakhshaliyev/Wave-Augs
+# =============================================================================
+
 import torch
 import numpy as np
 from pytorch_wavelets import DWT1DForward, DWT1DInverse
@@ -157,5 +169,3 @@ class Augmentation:
         batch_x = lam * batch_x[inds2] + (1 - lam) * batch_x
         batch_y = lam * batch_y[inds2] + (1 - lam) * batch_y
         return batch_x, batch_y
-
-    

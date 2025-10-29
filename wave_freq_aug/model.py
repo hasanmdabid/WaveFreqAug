@@ -1,3 +1,7 @@
+#====================================================================================================
+# This model implementation is developed by Md Abid Hasan as part of the WaveFreqAug project.
+# It includes DLinear and SCINet architectures for time series forecasting tasks.
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

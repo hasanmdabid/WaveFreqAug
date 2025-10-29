@@ -1,3 +1,8 @@
+# ===========================================================================================================
+# This main experiment script is developed by Md Abid Hasan as part of the WaveFreqAug project.
+# It orchestrates the training and evaluation of time series forecasting models with Wave-Freq augmentation.
+# ===========================================================================================================
+
 import os
 import gc
 import numpy as np
@@ -18,7 +23,7 @@ def main(epochs, learning_rate, patience, num_iterations, label_len):
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
             "expandable_segments:True"  # Reduce memory fragmentation
         )
-    models = ["SCINet"]
+    models = ["DLinear", "SCINet"]
     # Create directories
     os.makedirs("./checkpoints", exist_ok=True)
     os.makedirs("./plots", exist_ok=True)
@@ -249,7 +254,7 @@ def main(epochs, learning_rate, patience, num_iterations, label_len):
 if __name__ == "__main__":
     print("Starting main experiment...")
     main(
-        epochs=20, learning_rate=0.01, patience=7, num_iterations=3, label_len=0
+        epochs=20, learning_rate=0.01, patience=7, num_iterations=5, label_len=0
     )
     print("Main experiment finished.")
     gc.collect()

@@ -1,8 +1,12 @@
+
+#====================================================================================================
+# The augmentation method is developed by Md Abid Hasan as part of the WaveFreqAug project.
+# The method combines wavelet decomposition, adaptive frequency masking, and Fourier enhancement.
+
 import torch
 import numpy as np
 import pywt
 from numpy.fft import fft, ifft
-
 
 class Augmentation:
     def __init__(self):
