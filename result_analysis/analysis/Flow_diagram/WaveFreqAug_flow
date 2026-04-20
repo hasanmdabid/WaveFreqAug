@@ -1,0 +1,39 @@
+digraph {
+	fontsize=12 rankdir=TB
+	subgraph cluster0 {
+		label="Trend Decomposition"
+		A [label="Signal/Data" fillcolor="#2962FF" fontcolor=white style=filled]
+		B [label=Trend fillcolor="#D50000" fontcolor=white style=filled]
+		C [label=Residual fillcolor="#FFD600" style=filled]
+	}
+	subgraph cluster1 {
+		label="Wavelet Decomposition"
+		D [label=Approximation fillcolor="#00C853" fontcolor=white style=filled]
+		E [label=Detail fillcolor="#757575" fontcolor=white style=filled]
+	}
+	subgraph cluster2 {
+		label="Fourier Enhancement"
+		F [label="Enhanced Approximation" fillcolor="#E1BEE7" style=filled]
+	}
+	subgraph cluster3 {
+		label="Adaptive Masking"
+		G [label="Masked Details" fillcolor="#BBDEFB" style=filled]
+	}
+	subgraph cluster4 {
+		label="Reconstruction and Masking"
+		H [label="Augmented Residual" fillcolor="#FFD600" style=filled]
+		I [label=Summary]
+		J [label="Augmented Signal/Data" fillcolor="#FF6D00" style=filled]
+	}
+	A -> B
+	A -> C
+	C -> D
+	C -> E
+	D -> F
+	E -> G
+	F -> H
+	G -> H
+	B -> I
+	H -> I
+	I -> J
+}
