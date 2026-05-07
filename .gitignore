@@ -53,7 +53,6 @@ coverage.xml
 *.pth
 latex/
 result_analysis/
-wave_aug/
 .pytest_cache/
 cover/
 
@@ -135,6 +134,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+wave_aug/
 
 # Spyder project settings
 .spyderproject
@@ -198,5 +198,5 @@ __pycache__
 .ipynb_checkpoints      
 *.pickle
 *.npy
-a_c_p/
-*.pth 
+*.pth
+CLAUDE.md

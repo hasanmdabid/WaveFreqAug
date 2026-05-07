@@ -14,6 +14,8 @@ from dataloader import TimeSeriesDataset
 from dataset_parameter import dataset_configs
 import gc
 
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # setting device on GPU if available, else CPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
@@ -115,6 +117,10 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                     )
                     for itr in range(num_iterations):
                         print(f"Iteration {itr+1}/{num_iterations}")
+                        if itr > 0:
+                            del model
+                            torch.cuda.empty_cache()
+                            gc.collect()
                         if model_name == "DLinear":
                             model = DLinear(
                                 config["seq_len"],
@@ -143,17 +149,6 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                                 num_levels=3,
                                 kernel_size=5,
                                 dropout=0.2,
-                            ).to(device)
-                        elif model_name == "iTransformer":
-                            model = iTransformer(
-                                seq_len=config["seq_len"],
-                                pred_len=pred_len,
-                                enc_in=config["enc_in"],
-                                d_model=512,
-                                n_heads=8,
-                                e_layers=4,
-                                d_ff=2048,
-                                dropout=0.1,
                             ).to(device)
                         val_loss = train(
                             model,
@@ -252,8 +247,8 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
 
 if __name__ == "__main__":
     #-----------------------------------Select models to run experiments on-----------------------------------#
-    models = ["iTransformer"]
-    main(models, epochs=20, learning_rate=0.01, patience=10, num_iterations=3, label_len=0)
+    models = ["iTransformer", "DLinear", "SCINet"]  # You can choose any combination of the three models
+    main(models, epochs=20, learning_rate=0.01, patience=5, num_iterations=3, label_len=0)
     print("Main experiment finished.")
     gc.collect()
     torch.cuda.empty_cache()

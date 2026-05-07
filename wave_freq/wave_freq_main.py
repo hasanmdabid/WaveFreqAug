@@ -19,7 +19,6 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
     print(f"Using device: {device}")
     if torch.cuda.is_available():
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    models = ["DLinear", "SCINet", "iTransformer"]
     # Create directories
     os.makedirs("./checkpoints", exist_ok=True)
     os.makedirs("./plots", exist_ok=True)
@@ -262,8 +261,8 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
 if __name__ == "__main__":
     print("Starting main experiment...")
     # -----------------------------------Select models to run experiments on-----------------------------------#
-    models = ["iTransformer"]
-    main(models, epochs=20, learning_rate=0.01, patience=7, num_iterations=3, label_len=0)
+    models = ["iTransformer", "DLinear", "SCINet"]
+    main(models, epochs=20, learning_rate=0.01, patience=5, num_iterations=3, label_len=0)
     print("Main experiment finished.")
     gc.collect()
     torch.cuda.empty_cache()
