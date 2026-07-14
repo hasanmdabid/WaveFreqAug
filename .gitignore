@@ -200,3 +200,5 @@ __pycache__
 *.npy
 *.pth
 CLAUDE.md
+results/
+result_analysis/

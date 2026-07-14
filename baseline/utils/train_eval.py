@@ -13,8 +13,19 @@ import numpy as np
 import os
 import time
 import gc
-from aug_methods import Augmentation
-from model import iTransformer
+from baseline.utils.aug_methods import Augmentation
+from baseline.utils.model import iTransformer
+
+
+def _device_type(device):
+    return torch.device(device).type
+
+
+def _empty_cache(device_type):
+    if device_type == "cuda":
+        torch.cuda.empty_cache()
+    elif device_type == "mps":
+        torch.mps.empty_cache()
 
 
 # Metrics
@@ -95,13 +106,16 @@ def train(
     level=2,
     sampling_rate=0.2,
     n_imf=100,
+    dominant_k=4,
     epochs=30,
     lr=0.01,
     patience=12,
 ):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
-    scaler = GradScaler("cuda")
+    device_type = _device_type(device)
+    use_amp = device_type == "cuda"
+    scaler = GradScaler("cuda", enabled=use_amp)
     aug = Augmentation()
     early_stopping = EarlyStopping(patience=patience, verbose=True)
     path = f"./checkpoints/{aug_type}"
@@ -113,9 +127,10 @@ def train(
         train_loss = []
         epoch_time = time.time()
         for i, (batch_x, batch_y, aug_data) in enumerate(train_loader):
-            print(
-                f"Batch {i} - GPU memory allocated: {torch.cuda.memory_allocated(device)/1e9:.2f} GB"
-            )
+            if device_type == "cuda":
+                print(
+                    f"Batch {i} - GPU memory allocated: {torch.cuda.memory_allocated(device)/1e9:.2f} GB"
+                )
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
             aug_data = aug_data.float().to(device) if aug_data is not None else None
@@ -127,7 +142,7 @@ def train(
             loss_aug = None
 
             optimizer.zero_grad()
-            with autocast(device_type="cuda"):
+            with autocast(device_type=device_type, enabled=use_amp):
                 if aug_type == "None":
                     if isinstance(model, iTransformer):
                         # Apply input projection and positional encoding
@@ -236,6 +251,19 @@ def train(
                                 device
                             ),
                         )
+                    elif aug_type == "Dominant-Shuffle":
+                        xy = aug.dominant_shuffle(
+                            batch_x.cpu(),
+                            batch_y[:, -pred_len:, :].cpu(),
+                            k=dominant_k,
+                            dim=1,
+                        )
+                        batch_x2, batch_y2 = (
+                            xy[:, :seq_len, :].to(device),
+                            xy[:, seq_len : seq_len + label_len + pred_len, :].to(
+                                device
+                            ),
+                        )
                     elif aug_type == "StAug":
                         weighted_xy = aug.emd_aug(aug_data)  # type: ignore
                         batch_x2, batch_y2 = aug.mix_aug(
@@ -283,7 +311,7 @@ def train(
                     del batch_y2
                 if loss_aug is not None:
                     del loss_aug
-            torch.cuda.empty_cache()
+            _empty_cache(device_type)
             gc.collect()
 
         train_loss = np.average(train_loss)
@@ -305,11 +333,13 @@ def train(
 def validate(model, val_loader, device, criterion, pred_len):
     model.eval()
     total_loss = []
+    device_type = _device_type(device)
+    use_amp = device_type == "cuda"
     with torch.no_grad():
         for batch_x, batch_y, _ in val_loader:
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
-            with autocast(device_type="cuda"):
+            with autocast(device_type=device_type, enabled=use_amp):
                 if isinstance(model, iTransformer):
                     x = model.input_projection(batch_x)
                     x = x + model.positional_encoding[:, : model.seq_len, :].to(
@@ -330,7 +360,7 @@ def validate(model, val_loader, device, criterion, pred_len):
                 loss = criterion(outputs[:, -pred_len:, :], batch_y[:, -pred_len:, :])
             total_loss.append(loss.item())
             del batch_x, batch_y, outputs, loss
-            torch.cuda.empty_cache()
+            _empty_cache(device_type)
             gc.collect()
     return np.average(total_loss)
 
@@ -338,11 +368,13 @@ def validate(model, val_loader, device, criterion, pred_len):
 def test(model, test_loader, device, scaler, pred_len):
     model.eval()
     preds, trues = [], []
+    device_type = _device_type(device)
+    use_amp = device_type == "cuda"
     with torch.no_grad():
         for batch_x, batch_y, _ in test_loader:
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
-            with autocast(device_type="cuda"):
+            with autocast(device_type=device_type, enabled=use_amp):
                 if isinstance(model, iTransformer):
                     x = model.input_projection(batch_x)
                     x = x + model.positional_encoding[:, : model.seq_len, :].to(
@@ -365,7 +397,7 @@ def test(model, test_loader, device, scaler, pred_len):
             preds.append(outputs)
             trues.append(batch_y)
             del batch_x, batch_y, outputs
-            torch.cuda.empty_cache()
+            _empty_cache(device_type)
             gc.collect()
 
     preds = np.concatenate(preds, axis=0)

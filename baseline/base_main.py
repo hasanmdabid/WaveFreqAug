@@ -1,31 +1,31 @@
 # =============================================================================
-# This Script is adapted from the following source:
-# https://github.com/jafarbakhshaliyev/Wave-Augs
 
 import torch
-import pathlib
 import numpy as np
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import os
-from model import DLinear, iTransformer, SCINet
-from train_eval import train, test
-from dataloader import TimeSeriesDataset
-from dataset_parameter import dataset_configs
+from baseline.utils.model import DLinear, iTransformer, SCINet
+from baseline.utils.train_eval import train, test
+from baseline.utils.dataloader import TimeSeriesDataset
+from baseline.utils.dataset_parameter import dataset_configs
 import gc
 
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+import torch
 
-# setting device on GPU if available, else CPU
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("Using device:", device)
-print()
-path = pathlib.Path(__file__).parent.absolute()
+# Check for MPS (Mac GPU), then CUDA (NVIDIA GPU), otherwise use CPU
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
+print(f"Using device: {device}")
 
 # Main experiment
 def main(models, epochs, learning_rate, patience, num_iterations, label_len):
     print("Starting main experiment...")
-    
 
     # Create directories
     if not os.path.exists("./checkpoints"):
@@ -33,26 +33,48 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
     if not os.path.exists("./plots"):
         os.makedirs("./plots")
 
+    results_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+
     # Run experiments for each dataset
     for dataset_name, config in dataset_configs.items():
-        # Initialize per-iteration results CSV file
-        iteration_csv_path = f"{path}/results/iteration_results_{dataset_name}.csv"
-        with open(iteration_csv_path, "w", encoding="utf-8") as f_iter:
-            f_iter.write(
-                "dataset,model,pred_len,aug_type,iteration,val_loss,mae,mse,rse\n"
-            )
-
-        # Initialize average results CSV file
-        average_csv_path = f"{path}/results/average_results_{dataset_name}.csv"
-        with open(average_csv_path, "w", encoding="utf-8") as f_avg:
-            f_avg.write(
-                "dataset,model,pred_len,aug_type,val_loss,mae,mse,rse,mae_std,mse_std,rse_std\n"
-            )
-
         for model_name in models:
             print(
                 f"\n=== Processing dataset: {dataset_name} with model: {model_name} ==="
             )
+
+            # Per-model results directory. Open in append mode and only write the
+            # header when the file is new, so previously saved results are never erased.
+            model_results_dir = os.path.join(results_root, model_name)
+            os.makedirs(model_results_dir, exist_ok=True)
+
+            iteration_csv_path = os.path.join(
+                model_results_dir, f"iteration_results_{dataset_name}.csv"
+            )
+            if not os.path.exists(iteration_csv_path):
+                with open(iteration_csv_path, "w") as f_iter:
+                    f_iter.write(
+                        "dataset,model,pred_len,aug_type,iteration,val_loss,mae,mse,rse\n"
+                    )
+
+            average_csv_path = os.path.join(
+                model_results_dir, f"average_results_{dataset_name}.csv"
+            )
+            if not os.path.exists(average_csv_path):
+                with open(average_csv_path, "w") as f_avg:
+                    f_avg.write(
+                        "dataset,model,pred_len,aug_type,val_loss,mae,mse,rse,mae_std,mse_std,rse_std\n"
+                    )
+
+            # Build set of (pred_len, aug_type) pairs that already have results,
+            # so re-running does not duplicate or overwrite completed experiments.
+            completed_combos = set()
+            if os.path.exists(iteration_csv_path):
+                with open(iteration_csv_path, "r") as f:
+                    for line in f:
+                        parts = line.strip().split(",")
+                        if len(parts) >= 4 and parts[0] != "dataset":
+                            completed_combos.add((int(parts[2]), parts[3]))
+
             # Load datasets
             for pred_len in config["pred_lens"]:
                 print(f"\nPrediction length: {pred_len}")
@@ -110,6 +132,11 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
 
                 # Run experiments for each augmentation type
                 for aug_type in config["aug_types"]:
+                    if (pred_len, aug_type) in completed_combos:
+                        print(
+                            f"Skipping {aug_type} for {dataset_name}, pred_len={pred_len} (results already exist)"
+                        )
+                        continue
                     params = config["aug_params"][pred_len][aug_type]
                     mse_list, mae_list, rse_list, val_loss_list = [], [], [], []
                     print(
@@ -117,10 +144,6 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                     )
                     for itr in range(num_iterations):
                         print(f"Iteration {itr+1}/{num_iterations}")
-                        if itr > 0:
-                            del model
-                            torch.cuda.empty_cache()
-                            gc.collect()
                         if model_name == "DLinear":
                             model = DLinear(
                                 config["seq_len"],
@@ -165,6 +188,7 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                             level=params["level"],
                             sampling_rate=params["sampling_rate"],
                             n_imf=params["n_imf"],
+                            dominant_k=params.get("k", 4),
                             epochs=epochs,
                             lr=learning_rate,
                             patience=patience,
@@ -184,14 +208,14 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                         )
 
                         # Save iteration metrics to iteration_results CSV
-                        with open(iteration_csv_path, "a", encoding="utf-8") as f_iter:
+                        with open(iteration_csv_path, "a") as f_iter:
                             f_iter.write(
                                 f"{dataset_name},{model_name},{pred_len},{aug_type},{itr+1},"
                                 f"{val_loss:.6f},{mae:.6f},{mse:.6f},{rse:.6f}\n"
                             )
 
                     # Save average and standard deviation metrics to average_results CSV
-                    with open(average_csv_path, "a", encoding="utf-8") as f_avg:
+                    with open(average_csv_path, "a") as f_avg:
                         f_avg.write(
                             f"{dataset_name},{model_name},{pred_len},{aug_type},"
                             f"{np.mean(val_loss_list):.6f},{np.mean(mae_list):.6f},{np.mean(mse_list):.6f},"
@@ -246,9 +270,8 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
 
 
 if __name__ == "__main__":
-    #-----------------------------------Select models to run experiments on-----------------------------------#
-    models = ["iTransformer", "DLinear", "SCINet"]  # You can choose any combination of the three models
-    main(models, epochs=20, learning_rate=0.01, patience=5, num_iterations=3, label_len=0)
+    models = ["DLinear","SCINet"]
+    main(models=models, epochs=50, learning_rate=0.01, patience=15, num_iterations=5, label_len=0)
     print("Main experiment finished.")
     gc.collect()
     torch.cuda.empty_cache()

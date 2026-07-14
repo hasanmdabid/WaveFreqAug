@@ -3,10 +3,12 @@
 # The dataset parameters for different datasets and prediction lengths are specified here.
 # =============================================================================
 
+import pathlib
+_DATASET_DIR = str(pathlib.Path(__file__).parent.parent / "dataset")
 
 dataset_configs = {
-        "ETTh1": {
-        "data_path": "/home/abidhasan/Document/Project/WaveFreqAug_Forecasting/dataset/ETTh1.csv",
+    "ETTh1": {
+        "data_path": f"{_DATASET_DIR}/ETTh1.csv",
         "data_name": "ETTh1",
         "seq_len": 336,
         "enc_in": 7,
@@ -19,6 +21,7 @@ dataset_configs = {
             "Wave-Mask",
             "Wave-Mix",
             "StAug",
+            "Dominant-Shuffle",
         ],
         "aug_params": {
             96: {
@@ -61,6 +64,15 @@ dataset_configs = {
                     "level": 1,
                     "sampling_rate": 0.2,
                     "n_imf": 100,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.9,
@@ -112,6 +124,15 @@ dataset_configs = {
                     "sampling_rate": 0.8,
                     "n_imf": 100,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.9,
                     "rates": [0.5, 0.3, 0.1],
@@ -161,6 +182,15 @@ dataset_configs = {
                     "level": 1,
                     "sampling_rate": 0.8,
                     "n_imf": 100,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.8,
@@ -212,6 +242,15 @@ dataset_configs = {
                     "sampling_rate": 0.8,
                     "n_imf": 100,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.7,
                     "rates": [0.5, 0.3, 0.1],
@@ -224,7 +263,7 @@ dataset_configs = {
         },
     },
     "ETTh2": {
-        "data_path": "/home/abidhasan/Document/Project/WaveFreqAug_Forecasting/dataset/ETTh2.csv",
+        "data_path": f"{_DATASET_DIR}/ETTh2.csv",
         "data_name": "ETTh2",
         "seq_len": 336,
         "enc_in": 7,
@@ -237,6 +276,7 @@ dataset_configs = {
             "Wave-Mask",
             "Wave-Mix",
             "StAug",
+            "Dominant-Shuffle",
         ],
         "aug_params": {
             96: {
@@ -279,6 +319,15 @@ dataset_configs = {
                     "level": 2,
                     "sampling_rate": 0.2,
                     "n_imf": 100,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.4,
@@ -330,6 +379,15 @@ dataset_configs = {
                     "sampling_rate": 0.5,
                     "n_imf": 100,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.9,
                     "rates": [0.5, 0.3, 0.1],
@@ -379,6 +437,15 @@ dataset_configs = {
                     "level": 3,
                     "sampling_rate": 0.8,
                     "n_imf": 100,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.6,
@@ -430,6 +497,15 @@ dataset_configs = {
                     "sampling_rate": 1.0,
                     "n_imf": 100,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.4,
                     "rates": [0.5, 0.3, 0.1],
@@ -442,7 +518,7 @@ dataset_configs = {
         },
     },
     "ILI": {
-        "data_path": "/home/abidhasan/Document/Project/WaveFreqAug_Forecasting/dataset/national_illness.csv",
+        "data_path": f"{_DATASET_DIR}/national_illness.csv",
         "data_name": "custom",
         "seq_len": 36,
         "enc_in": 7,
@@ -455,6 +531,7 @@ dataset_configs = {
             "Wave-Mask",
             "Wave-Mix",
             "StAug",
+            "Dominant-Shuffle",
         ],
         "aug_params": {
             24: {
@@ -497,6 +574,15 @@ dataset_configs = {
                     "level": 1,
                     "sampling_rate": 0.2,
                     "n_imf": 100,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.7,
@@ -548,6 +634,15 @@ dataset_configs = {
                     "sampling_rate": 0.8,
                     "n_imf": 100,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.3,
                     "rates": [0.5, 0.3, 0.1],
@@ -597,6 +692,15 @@ dataset_configs = {
                     "level": 1,
                     "sampling_rate": 1.0,
                     "n_imf": 100,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.9,
@@ -648,6 +752,15 @@ dataset_configs = {
                     "sampling_rate": 0.5,
                     "n_imf": 100,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.7,
                     "rates": [0.5, 0.3, 0.1],
@@ -660,7 +773,7 @@ dataset_configs = {
         },
     },
     "weather": {
-        "data_path": "/home/abidhasan/Document/Project/WaveFreqAug_Forecasting/dataset/weather.csv",
+        "data_path": f"{_DATASET_DIR}/weather.csv",
         "data_name": "weather",
         "seq_len": 336,
         "enc_in": 21,
@@ -673,6 +786,7 @@ dataset_configs = {
             "Wave-Mask",
             "Wave-Mix",
             "StAug",
+            "Dominant-Shuffle",
         ],
         "aug_params": {
             96: {
@@ -715,6 +829,15 @@ dataset_configs = {
                     "level": 1,
                     "sampling_rate": 1.0,
                     "n_imf": 10,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.5,
@@ -766,6 +889,15 @@ dataset_configs = {
                     "sampling_rate": 1.0,
                     "n_imf": 10,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.5,
                     "rates": [0.5, 0.3, 0.1],
@@ -816,6 +948,15 @@ dataset_configs = {
                     "sampling_rate": 1.0,
                     "n_imf": 10,
                 },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
                 "StAug": {
                     "aug_rate": 0.5,
                     "rates": [0.5, 0.3, 0.1],
@@ -865,6 +1006,15 @@ dataset_configs = {
                     "level": 1,
                     "sampling_rate": 1.0,
                     "n_imf": 10,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
                 },
                 "StAug": {
                     "aug_rate": 0.5,

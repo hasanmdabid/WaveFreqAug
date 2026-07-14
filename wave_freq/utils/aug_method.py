@@ -23,7 +23,7 @@ class Augmentation:
         mask_rate=0.15,
         wavelet="db4",
         level=4,
-        lambd=None,
+        lambd="U-Shape",
         dim=1,
         window=12,
         top_k_ratio=0.2,
@@ -48,14 +48,16 @@ class Augmentation:
         xy_np = xy.cpu().numpy()
         xy_aug = np.zeros_like(xy_np)
 
-        if lambd is None:
+        if lambd == "uniform":
+            lambd = np.random.uniform(0, 1)
+        else:  # "U-Shape" or any unrecognised value → Beta(0.5, 0.5)
             lambd = np.random.beta(0.5, 0.5)
 
         for b in range(batch_size):
             for c in range(enc_in):
                 series = xy_np[b, :, c]
                 # Trend decomposition
-                trend = np.convolve(series, np.ones(window) / window, mode="same")
+                trend = np.convolve(series, np.ones(window) / window, mode="same") # type : ignore
                 residual = series - trend
 
                 # Wavelet decomposition on residual

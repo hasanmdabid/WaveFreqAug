@@ -14,7 +14,6 @@
 import torch
 import numpy as np
 from pytorch_wavelets import DWT1DForward, DWT1DInverse
-from PyEMD import EMD
 import pywt
 from numpy.fft import fft, ifft
 
@@ -147,6 +146,45 @@ class Augmentation:
         reconstructed = idwt((cA_mixed, mixed_cDs))
         reconstructed = reconstructed.permute(0, 2, 1)
         return reconstructed.float()
+
+    @staticmethod
+    def dominant_shuffle(
+        x: torch.Tensor, y: torch.Tensor, k: int = 4, dim: int = 1
+    ) -> torch.Tensor:
+        """
+        Dominant Shuffle augmentation (Zhao et al., 2024, arXiv:2405.16456).
+
+        Concatenate [x, y], take the rFFT along the time axis, select the top-k
+        dominant frequencies by amplitude (excluding the DC component), randomly
+        permute those k complex components per (sample, channel), then iFFT back.
+        Args:
+            x: Input tensor (batch_size, seq_len, enc_in)
+            y: Ground truth (batch_size, pred_len, enc_in)
+            k: Number of dominant frequencies to shuffle
+            dim: Time dimension (typically 1)
+        Returns:
+            Augmented tensor (batch_size, seq_len + pred_len, enc_in)
+        """
+        xy = torch.cat([x, y], dim=dim)
+        total_len = xy.size(dim)
+        xy_f = torch.fft.rfft(xy, dim=dim)
+        magnitude = xy_f.abs()
+        # Exclude DC (index 0); cap k to the number of available non-DC bins.
+        n_freq = xy_f.size(dim)
+        k = max(0, min(int(k), n_freq - 1))
+        if k == 0:
+            return xy.float()
+        # (batch, k, enc_in): the k highest-amplitude frequency positions per sample/channel.
+        topk_indices = torch.argsort(magnitude, dim=dim, descending=True)[:, 1 : k + 1, :]
+        new_xy_f = xy_f.clone()
+        batch_size, _, enc_in = xy.shape
+        for c in range(enc_in):
+            for b in range(batch_size):
+                idx = topk_indices[b, :, c]            # original dominant positions
+                perm = idx[torch.randperm(k)]          # same positions, shuffled order
+                new_xy_f[b, idx, c] = xy_f[b, perm, c]  # permute the complex components
+        xy = torch.fft.irfft(new_xy_f, n=total_len, dim=dim)
+        return xy.float()
 
     @staticmethod
     def emd_aug(x: torch.Tensor) -> torch.Tensor:
