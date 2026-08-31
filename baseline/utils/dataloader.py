@@ -57,11 +57,13 @@ class TimeSeriesDataset(Dataset):
         pred_len=96,
         enc_in=7,
         n_imf=500,
+        compute_aug_data=True,
     ):
         self.seq_len = seq_len
         self.label_len = label_len
         self.pred_len = pred_len
         self.n_imf = n_imf
+        self.compute_aug_data = compute_aug_data
         self.data_name = data_name
         assert flag in ["train", "val", "test"]
         type_map = {"train": 0, "val": 1, "test": 2}
@@ -101,7 +103,7 @@ class TimeSeriesDataset(Dataset):
         train_data = df_data[border1s[0] : border2s[0]]
         self.scaler.fit(train_data.values)
         data = self.scaler.transform(df_data.values)
-        if self.set_type == 0:  # Train
+        if self.set_type == 0 and self.compute_aug_data:  # Train
             self.aug_data = emd_augment(
                 data[border1:border2], self.seq_len + self.pred_len, n_IMF=self.n_imf
             )

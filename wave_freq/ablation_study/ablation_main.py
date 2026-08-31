@@ -14,33 +14,56 @@ Run from the repo root:
     python ablation_study/ablation_main.py
 """
 
-import numpy as np
-import os
-import sys
-import pathlib
-import torch
-import torch.multiprocessing as mp
-import matplotlib
-
-matplotlib.use("Agg")
+import gc, os, sys, time, pathlib
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent.parent.resolve()  # wave_freq/
 _REPO_ROOT = _SCRIPT_DIR.parent.resolve()
+# Must happen before any `wave_freq.*` import below, regardless of how/where
+# this script is launched from (terminal, IDE run button, different cwd, etc.).
 for p in [str(_SCRIPT_DIR), str(_REPO_ROOT)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from wave_freq.utils.dataset_parameter import dataset_configs  # noqa: E402
-
 # ─── Workers ──────────────────────────────────────────────────────────────────
-NUM_WORKERS_POOL = 4  # lower than main.py; ablation has fewer combos
+NUM_WORKERS_POOL = 16  # lower than main.py; ablation has fewer combos
+
+# Each worker process defaults to using every CPU core for its BLAS/OMP thread
+# pool; with NUM_WORKERS_POOL of them running at once that oversubscribes the
+# machine and starves the GPU feed loop (symptom: near-0% GPU util despite
+# multiple workers "running"). Cap each worker to a fair share of the cores
+# instead — must be set before numpy/torch import so their BLAS/OMP backends
+# pick it up at init.
+_CPU_THREADS_PER_WORKER = max(1, (os.cpu_count() or NUM_WORKERS_POOL) // NUM_WORKERS_POOL)
+os.environ["OMP_NUM_THREADS"] = str(_CPU_THREADS_PER_WORKER)
+os.environ["MKL_NUM_THREADS"] = str(_CPU_THREADS_PER_WORKER)
+
+import numpy as np
+import torch
+import torch.multiprocessing as mp
+import matplotlib
+matplotlib.use("Agg")
+import torch.nn as nn
+from torch.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
+from torch.utils.data import DataLoader
+from wave_freq.utils.model import DLinear, SCINet, iTransformer, FEDformer
+from wave_freq.utils.dataloader import TimeSeriesDataset
+from wave_freq.ablation_study.aug_method_ablation import AblationAugmentation
+from wave_freq.utils.dataset_parameter import dataset_configs
+
+torch.set_num_threads(_CPU_THREADS_PER_WORKER)
+
 SAMPLING_RATE = 0.2
 
 # ─── Ablation variants ────────────────────────────────────────────────────────
-# "Full" is included as the reference so all three variants are in one CSV.
+# "Full" is included as the reference so all variants are in one CSV.
+# Name matches what the response letter (Reviewer 1, Comment 1) promises:
+# "WaveFreqAug-FixedRate" — the adaptive per-level masking rate replaced by a
+# constant rate applied uniformly to every decomposition level.
 ABLATION_VARIANTS = [
     "WaveFreqAug-NoFourier",
     "WaveFreqAug-NoMasking",
+    "WaveFreqAug-FixedRate",
 ]
 
 # ─── Best parameters per (dataset, model, pred_len) ──────────────────────────
@@ -285,26 +308,12 @@ BEST_PARAMS: dict[tuple, dict] = {
 # ─── Worker ───────────────────────────────────────────────────────────────────
 def _run_ablation_combo(args: dict):
     """Train + test one (dataset, model, pred_len, aug_variant) inside a subprocess."""
-    import gc, os, sys, time, pathlib
-    import numpy as np
-    import torch
-    import torch.nn as nn
-    from torch.amp.autocast_mode import autocast
-    from torch.amp.grad_scaler import GradScaler
-    import matplotlib
-
-    matplotlib.use("Agg")
-    from torch.utils.data import DataLoader
 
     script_dir = pathlib.Path(args["script_dir"])
     repo_root = pathlib.Path(args["repo_root"])
     for p in [str(script_dir), str(repo_root)]:
         if p not in sys.path:
             sys.path.insert(0, p)
-
-    from wave_freq.utils.model import DLinear, SCINet, iTransformer
-    from wave_freq.utils.dataloader import TimeSeriesDataset
-    from wave_freq.ablation_study.aug_method_ablation import AblationAugmentation
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == "cuda":
@@ -405,15 +414,23 @@ def _run_ablation_combo(args: dict):
                 dropout=0.2,
             ).to(device)
         if model_name == "iTransformer":
+            # Matches wave_freq/main.py's iTransformer config exactly, so the
+            # ablation arms are comparable to the main WaveFreqAug results.
             return iTransformer(
                 seq_len=seq_len,
                 pred_len=pred_len,
                 enc_in=config["enc_in"],
                 d_model=512,
                 n_heads=8,
-                e_layers=4,
-                d_ff=2048,
+                e_layers=2,
+                d_ff=512,
                 dropout=0.1,
+            ).to(device)
+        if model_name == "FEDformer":
+            return FEDformer(
+                seq_len=seq_len,
+                pred_len=pred_len,
+                enc_in=config["enc_in"],
             ).to(device)
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -424,6 +441,8 @@ def _run_ablation_combo(args: dict):
         aug_fn = aug_obj.wave_freq_aug_no_fourier
     elif aug_variant == "WaveFreqAug-NoMasking":
         aug_fn = aug_obj.wave_freq_aug_no_masking
+    elif aug_variant == "WaveFreqAug-FixedRate":
+        aug_fn = aug_obj.wave_freq_aug_fixed_rate
     else:
         raise ValueError(f"Unknown aug_variant: {aug_variant}")
 
@@ -514,6 +533,12 @@ def _run_ablation_combo(args: dict):
             criterion = nn.SmoothL1Loss()
             scaler = GradScaler("cuda") if device.type == "cuda" else None
             early_stop = EarlyStopping(patience=patience)
+            # Clear any checkpoint left over from a previous iteration of this
+            # same combo so a run that diverges before ever saving one can't
+            # silently be scored against a stale, unrelated checkpoint.
+            stale_ckpt = str(checkpoints_dir / "checkpoint.pth")
+            if os.path.exists(stale_ckpt):
+                os.remove(stale_ckpt)
 
             for epoch in range(epochs):
                 model.train()
@@ -557,10 +582,13 @@ def _run_ablation_combo(args: dict):
 
                     if scaler is not None:
                         scaler.scale(loss).backward()
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                         scaler.step(optimizer)
                         scaler.update()
                     else:
                         loss.backward()
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
                         optimizer.step()
                     train_losses.append(loss.item())
 
@@ -569,6 +597,16 @@ def _run_ablation_combo(args: dict):
                     f"  [pid={os.getpid()}] epoch={epoch+1} train={np.mean(train_losses):.6f} val={val_loss:.6f} — {tag}",
                     flush=True,
                 )
+
+                if not np.isfinite(val_loss):
+                    # Diverged — bail out now instead of waiting out the rest
+                    # of the patience budget on a run that's already dead.
+                    print(
+                        f"  [pid={os.getpid()}] val_loss non-finite ({val_loss}) "
+                        f"— aborting this run — {tag}",
+                        flush=True,
+                    )
+                    break
 
                 early_stop(val_loss, model, str(checkpoints_dir))
                 if early_stop.early_stop:
@@ -667,6 +705,41 @@ def _load_completed(avg_csv: str) -> set:
     return completed
 
 
+def _best_params_dynamic(dataset_name: str, model_name: str, pred_len: int) -> dict | None:
+    """For models without curated BEST_PARAMS entries (iTransformer, FEDformer,
+    added after the original grid search), read the main WaveFreqAug
+    experiment's average_results CSV (wave_freq/main.py's output) and return
+    the lowest-MSE config for this (dataset, pred_len) cell. Returns None if
+    no result exists yet for this cell — e.g. the main random-search run
+    (see wave_freq/main.py) hasn't reached it — in which case the caller skips
+    this cell rather than fabricating a hyperparameter choice."""
+    avg_csv = _SCRIPT_DIR / "results" / model_name / f"average_results_{dataset_name}.csv"
+    if not avg_csv.exists():
+        return None
+    best, best_mse = None, float("inf")
+    with open(avg_csv, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split(",")
+            if parts[0] in ("dataset", "") or len(parts) < 17:
+                continue
+            try:
+                if int(parts[2]) != pred_len:
+                    continue
+                mse = float(parts[11])
+                if mse < best_mse:
+                    best_mse = mse
+                    best = {
+                        "mask_rate": float(parts[4]),
+                        "level": int(parts[5]),
+                        "wavelet": parts[6],
+                        "lambd": parts[7],
+                        "window": int(parts[8]),
+                    }
+            except (ValueError, IndexError):
+                continue
+    return best
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 def main(
     models=("DLinear", "SCINet"),
@@ -711,10 +784,23 @@ def main(
             combos = []
             for pred_len in config["pred_lens"]:
                 key = (dataset_name, model_name, pred_len)
-                if key not in BEST_PARAMS:
-                    print(f"  WARNING: no best params for {key} — skipping", flush=True)
-                    continue
-                params = BEST_PARAMS[key]
+                if model_name in ("DLinear", "SCINet"):
+                    if key not in BEST_PARAMS:
+                        print(f"  WARNING: no best params for {key} — skipping", flush=True)
+                        continue
+                    params = BEST_PARAMS[key]
+                else:
+                    # iTransformer/FEDformer have no curated grid-search
+                    # entry — pull the best config found so far by the main
+                    # random-search run (wave_freq/main.py) for this cell.
+                    params = _best_params_dynamic(dataset_name, model_name, pred_len)
+                    if params is None:
+                        print(
+                            f"  WARNING: no completed WaveFreqAug results yet for {key} "
+                            f"— skipping (run wave_freq/main.py for this cell first).",
+                            flush=True,
+                        )
+                        continue
                 for av in ABLATION_VARIANTS:
                     if (pred_len, av) in completed:
                         print(
@@ -796,7 +882,7 @@ def main(
 if __name__ == "__main__":
 
     main(
-        models=["DLinear", "SCINet"],
+        models=["DLinear", "SCINet", "iTransformer", "FEDformer"],
         epochs=30,
         learning_rate=0.01,
         patience=10,

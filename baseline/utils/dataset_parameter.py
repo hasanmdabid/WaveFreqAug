@@ -4,7 +4,7 @@
 # =============================================================================
 
 import pathlib
-_DATASET_DIR = str(pathlib.Path(__file__).parent.parent / "dataset")
+_DATASET_DIR = str(pathlib.Path(__file__).parent.parent.parent / "dataset")
 
 dataset_configs = {
     "ETTh1": {

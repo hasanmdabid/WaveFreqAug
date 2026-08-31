@@ -8,13 +8,11 @@
 import torch
 import torch.nn as nn
 from torch.amp import GradScaler, autocast # type: ignore
-import torch.utils.checkpoint as checkpoint
 import numpy as np
 import os
 import time
 import gc
 from baseline.utils.aug_methods import Augmentation
-from baseline.utils.model import iTransformer
 
 
 def _device_type(device):
@@ -110,6 +108,7 @@ def train(
     epochs=30,
     lr=0.01,
     patience=12,
+    checkpoint_dir=None,
 ):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
@@ -118,19 +117,21 @@ def train(
     scaler = GradScaler("cuda", enabled=use_amp)
     aug = Augmentation()
     early_stopping = EarlyStopping(patience=patience, verbose=True)
-    path = f"./checkpoints/{aug_type}"
+    path = checkpoint_dir if checkpoint_dir is not None else f"./checkpoints/{aug_type}"
     if not os.path.exists(path):
         os.makedirs(path)
+    # Clear any checkpoint left over from a previous iteration of this same combo
+    # so a run that diverges before ever saving one can't silently be scored
+    # against a stale, unrelated checkpoint.
+    stale_ckpt = os.path.join(path, "checkpoint.pth")
+    if os.path.exists(stale_ckpt):
+        os.remove(stale_ckpt)
 
     for epoch in range(epochs):
         model.train()
         train_loss = []
         epoch_time = time.time()
         for i, (batch_x, batch_y, aug_data) in enumerate(train_loader):
-            if device_type == "cuda":
-                print(
-                    f"Batch {i} - GPU memory allocated: {torch.cuda.memory_allocated(device)/1e9:.2f} GB"
-                )
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
             aug_data = aug_data.float().to(device) if aug_data is not None else None
@@ -144,47 +145,13 @@ def train(
             optimizer.zero_grad()
             with autocast(device_type=device_type, enabled=use_amp):
                 if aug_type == "None":
-                    if isinstance(model, iTransformer):
-                        # Apply input projection and positional encoding
-                        x = model.input_projection(batch_x)
-                        x = x + model.positional_encoding[:, : model.seq_len, :].to(
-                            x.device
-                        )
-                        # Checkpoint transformer layers
-                        outputs = checkpoint.checkpoint_sequential(
-                            model.transformer_encoder.layers,
-                            segments=2,
-                            input=x,
-                            use_reentrant=False,
-                        )
-                        outputs = model.output_projection(
-                            outputs.reshape(batch_x.size(0), -1)
-                        )
-                        outputs = outputs.view(batch_x.size(0), pred_len, model.enc_in)
-                    else:
-                        outputs = model(batch_x)
+                    outputs = model(batch_x)
                     loss = criterion(
                         outputs[:, -pred_len:, :], batch_y[:, -pred_len:, :]
                     )
                 else:
                     # Original batch
-                    if isinstance(model, iTransformer):
-                        x = model.input_projection(batch_x)
-                        x = x + model.positional_encoding[:, : model.seq_len, :].to(
-                            x.device
-                        )
-                        outputs = checkpoint.checkpoint_sequential(
-                            model.transformer_encoder.layers,
-                            segments=2,
-                            input=x,
-                            use_reentrant=False,
-                        )
-                        outputs = model.output_projection(
-                            outputs.reshape(batch_x.size(0), -1)
-                        )
-                        outputs = outputs.view(batch_x.size(0), pred_len, model.enc_in)
-                    else:
-                        outputs = model(batch_x)
+                    outputs = model(batch_x)
                     loss = criterion(
                         outputs[:, -pred_len:, :], batch_y[:, -pred_len:, :]
                     )
@@ -271,23 +238,7 @@ def train(
                             weighted_xy[:, seq_len : seq_len + label_len + pred_len, :],
                             lambd=aug_rate,
                         )
-                    if isinstance(model, iTransformer):
-                        x = model.input_projection(batch_x2)
-                        x = x + model.positional_encoding[:, : model.seq_len, :].to(
-                            x.device
-                        )
-                        outputs = checkpoint.checkpoint_sequential(
-                            model.transformer_encoder.layers,
-                            segments=2,
-                            input=x,
-                            use_reentrant=False,
-                        )
-                        outputs = model.output_projection(
-                            outputs.reshape(batch_x2.size(0), -1) # type: ignore
-                        )
-                        outputs = outputs.view(batch_x2.size(0), pred_len, model.enc_in) # type: ignore
-                    else:
-                        outputs = model(batch_x2)
+                    outputs = model(batch_x2)
                     loss_aug = criterion(
                         outputs[:, -pred_len:, :], batch_y2[:, -pred_len:, :] # type: ignore
                     )
@@ -295,6 +246,8 @@ def train(
                     loss = loss + loss_aug
 
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             scaler.step(optimizer)
             scaler.update()
 
@@ -320,6 +273,15 @@ def train(
             f"Epoch: {epoch + 1}, Time: {time.time() - epoch_time:.2f}s | Train Loss: {train_loss:.7f} Val Loss: {val_loss:.7f}"
         )
 
+        if not np.isfinite(val_loss):
+            # Diverged. NaN/Inf breaks EarlyStopping's comparisons (any
+            # comparison against nan is False, so it would otherwise never
+            # patience-stop and would keep overwriting the checkpoint with
+            # diverged weights every epoch) — bail out now instead of burning
+            # the rest of the epoch budget on a run that's already dead.
+            print(f"Epoch: {epoch + 1}: val_loss is non-finite ({val_loss}) — aborting this run.")
+            break
+
         early_stopping(val_loss, model, path)
         if early_stopping.early_stop:
             print("Early stopping")
@@ -340,23 +302,7 @@ def validate(model, val_loader, device, criterion, pred_len):
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
             with autocast(device_type=device_type, enabled=use_amp):
-                if isinstance(model, iTransformer):
-                    x = model.input_projection(batch_x)
-                    x = x + model.positional_encoding[:, : model.seq_len, :].to(
-                        x.device
-                    )
-                    outputs = checkpoint.checkpoint_sequential(
-                        model.transformer_encoder.layers,
-                        segments=2,
-                        input=x,
-                        use_reentrant=False,
-                    )
-                    outputs = model.output_projection(
-                        outputs.reshape(batch_x.size(0), -1)
-                    )
-                    outputs = outputs.view(batch_x.size(0), pred_len, model.enc_in)
-                else:
-                    outputs = model(batch_x)
+                outputs = model(batch_x)
                 loss = criterion(outputs[:, -pred_len:, :], batch_y[:, -pred_len:, :])
             total_loss.append(loss.item())
             del batch_x, batch_y, outputs, loss
@@ -375,23 +321,7 @@ def test(model, test_loader, device, scaler, pred_len):
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
             with autocast(device_type=device_type, enabled=use_amp):
-                if isinstance(model, iTransformer):
-                    x = model.input_projection(batch_x)
-                    x = x + model.positional_encoding[:, : model.seq_len, :].to(
-                        x.device
-                    )
-                    outputs = checkpoint.checkpoint_sequential(
-                        model.transformer_encoder.layers,
-                        segments=2,
-                        input=x,
-                        use_reentrant=False,
-                    )
-                    outputs = model.output_projection(
-                        outputs.reshape(batch_x.size(0), -1)
-                    )
-                    outputs = outputs.view(batch_x.size(0), pred_len, model.enc_in)
-                else:
-                    outputs = model(batch_x)
+                outputs = model(batch_x)
             outputs = outputs[:, -pred_len:, :].cpu().numpy()
             batch_y = batch_y[:, -pred_len:, :].cpu().numpy()
             preds.append(outputs)

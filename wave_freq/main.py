@@ -1,6 +1,7 @@
 import os
 import sys
 import pathlib
+import random
 import torch
 import torch.multiprocessing as mp
 from itertools import product
@@ -8,8 +9,12 @@ import matplotlib
 matplotlib.use("Agg")   # non-interactive backend — safe in subprocesses
 
 _SCRIPT_DIR = pathlib.Path(__file__).parent.resolve()
-if str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
+_REPO_ROOT = _SCRIPT_DIR.parent
+# The `wave_freq.*` absolute imports below need the repo root (parent of this
+# script's directory) on sys.path, regardless of how/where this script is
+# launched from (terminal, IDE run button, different cwd, etc.).
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # Only dataset_configs is needed in the main process; all model/training imports
 # happen inside _run_combo so each spawned subprocess gets its own clean state.
@@ -18,13 +23,21 @@ from wave_freq.utils.dataset_parameter import dataset_configs     # noqa: E402
 print("Script directory:", _SCRIPT_DIR)
 
 # ─── VRAM knob ─────────────────────────────────────────────────────────────────
-# With 8 workers sharing one RTX 4090 (24 GB), each run gets ~3 GB.
-# If you hit OOM, lower this value (e.g. 16 or 8) and restart — completed
-# combos are skipped automatically.
+# With many workers sharing one RTX 4090 (24 GB), each run gets a slice of VRAM.
+# If you hit OOM, lower this value and restart — completed combos are skipped
+# automatically.
 BATCH_SIZE_OVERRIDE: int | None = None   # None = use dataset default
 
-# Number of parallel worker processes
-NUM_WORKERS_POOL = 8
+# Number of parallel worker processes. DLinear/SCINet/iTransformer/FEDformer are
+# all small enough that VRAM is rarely the bottleneck here (~0.5-1 GB/worker) —
+# CPU threading is. See _CPU_THREADS_PER_WORKER below.
+NUM_WORKERS_POOL = 16
+
+# Each worker process defaults to using every CPU core for its BLAS/OMP thread
+# pool; with NUM_WORKERS_POOL of them running at once that oversubscribes the
+# machine and starves the GPU feed loop (symptom: near-0% GPU util despite
+# multiple workers "running"). Cap each worker to a fair share of the cores instead.
+_CPU_THREADS_PER_WORKER = max(1, (os.cpu_count() or NUM_WORKERS_POOL) // NUM_WORKERS_POOL)
 
 # ─── Grid search axes ──────────────────────────────────────────────────────────
 MASK_RATES = [0.1, 0.15, 0.2]
@@ -32,6 +45,32 @@ LEVELS     = [1, 3, 5]
 WAVELETS   = ["db2", "db4", "sym4"]
 LAMBDS     = ["U-Shape", "uniform"]
 WINDOWS    = [6, 12, 24]
+
+# ILI's look-back window is only 36 steps. The centered moving-average trend
+# (Eq. 1) leaks up to floor(w/2) genuine future steps into the augmented input
+# (Reviewer 1, Comment 4) — at w=24 that's 12/36 = 33.3% of the look-back. Use a
+# smaller window range for ILI specifically: at w=6 the max leakage drops to
+# 2/36 = 8.3%.
+WINDOWS_ILI = [2, 4, 6]
+
+
+def _windows_for(dataset_name: str) -> list:
+    return WINDOWS_ILI if dataset_name == "ILI" else WINDOWS
+
+
+# ─── Random search ───────────────────────────────────────────────────────────
+# Full grid search (162 points per pred_len) was originally run in full for
+# DLinear/SCINet (results/grid_search/) and was impractical for iTransformer/
+# FEDformer given their much higher per-combo cost, so those two started on
+# random search from the outset (results/random_search/). Random search over
+# the same discrete grid is at least as sample-efficient in practice (Bergstra
+# & Bengio, 2012) and fits the differing-tuning-budget disclosure already made
+# in Supplementary Note 2. DLinear/SCINet's existing grid results are kept
+# as-is; this script now additionally runs random search for them too (a
+# separate, independently-tracked result set under results/random_search/),
+# so all four models are evaluated with random search.
+RANDOM_SEARCH_MODELS = {"DLinear", "SCINet", "iTransformer", "FEDformer"}
+RANDOM_SEARCH_N = 20
 
 # ─── Fixed parameters ──────────────────────────────────────────────────────────
 AUG_TYPE      = "Wave-Freq"
@@ -47,6 +86,11 @@ def _run_combo(args: dict):
     Returns a result dict on success, or None if all iterations failed.
     """
     import gc, os, sys, time, pathlib
+    # Must be set before numpy/torch import so their BLAS/OMP backends pick it
+    # up at init — otherwise each worker defaults to using every CPU core and
+    # NUM_WORKERS_POOL of them thrash each other, starving the GPU feed loop.
+    os.environ["OMP_NUM_THREADS"] = str(_CPU_THREADS_PER_WORKER)
+    os.environ["MKL_NUM_THREADS"] = str(_CPU_THREADS_PER_WORKER)
     import numpy as np
     import torch
     import matplotlib
@@ -54,11 +98,14 @@ def _run_combo(args: dict):
     import matplotlib.pyplot as plt
     from torch.utils.data import DataLoader
 
-    script_dir = pathlib.Path(args["script_dir"])
-    if str(script_dir) not in sys.path:
-        sys.path.insert(0, str(script_dir))
+    torch.set_num_threads(_CPU_THREADS_PER_WORKER)
 
-    from wave_freq.utils.model import DLinear, SCINet, iTransformer
+    script_dir = pathlib.Path(args["script_dir"])
+    repo_root = script_dir.parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    from wave_freq.utils.model import DLinear, SCINet, iTransformer, FEDformer
     from wave_freq.utils.train_eval import train, test
     from wave_freq.utils.dataloader import TimeSeriesDataset
 
@@ -83,14 +130,15 @@ def _run_combo(args: dict):
     batch_size     = args["batch_size_override"] or config["batch_size"]
     sampling_rate  = args["sampling_rate"]
     aug_type       = args["aug_type"]
+    search_mode    = args["search_mode"]
     seq_len        = config["seq_len"]
 
-    tag = (f"{dataset_name}/{model_name} pred={pred_len} mr={mask_rate} "
+    tag = (f"[{search_mode}] {dataset_name}/{model_name} pred={pred_len} mr={mask_rate} "
            f"lv={level} wl={wavelet} lm={lambd} win={window}")
     print(f"[pid={os.getpid()}] Starting: {tag}", flush=True)
 
-    checkpoints_root = script_dir / "checkpoints"
-    plots_root       = script_dir / "plots"
+    checkpoints_root = script_dir / "checkpoints" / search_mode
+    plots_root       = script_dir / "plots" / search_mode
     checkpoint_dir   = str(checkpoints_root / (
         f"{dataset_name}_{aug_type}_{pred_len}_{model_name}"
         f"_{mask_rate}_{level}_{wavelet}_{lambd}_{window}"
@@ -128,7 +176,11 @@ def _run_combo(args: dict):
         if model_name == "iTransformer":
             return iTransformer(
                 seq_len=seq_len, pred_len=pred_len, enc_in=config["enc_in"],
-                d_model=512, n_heads=8, e_layers=4, d_ff=2048, dropout=0.1,
+                d_model=512, n_heads=8, e_layers=2, d_ff=512, dropout=0.1,
+            ).to(device)
+        if model_name == "FEDformer":
+            return FEDformer(
+                seq_len=seq_len, pred_len=pred_len, enc_in=config["enc_in"],
             ).to(device)
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -264,6 +316,46 @@ def _load_completed_combos(avg_csv: str) -> set:
     return completed
 
 
+def _purge_stale_iterations(iter_csv: str, pairs: set) -> int:
+    """Remove any existing iteration rows for the given (pred_len, mask_rate,
+    level, wavelet, lambd, window) combos from iter_csv. Used when a combo is
+    about to be rerun because it has no average row yet — clears out any
+    orphaned iteration data (e.g. left over from a run interrupted between
+    writing the iteration rows and the average row) so it doesn't mix with the
+    fresh rerun. Returns the number of rows removed."""
+    if not pairs or not os.path.exists(iter_csv):
+        return 0
+    with open(iter_csv, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    if not lines:
+        return 0
+    header, rows = lines[0], lines[1:]
+    kept = []
+    removed = 0
+    for line in rows:
+        parts = line.strip().split(",")
+        key = None
+        if len(parts) >= 9:
+            try:
+                if len(parts) >= 15:   # new schema with lambd, window, exec_time
+                    key = (int(parts[2]), float(parts[4]), int(parts[5]),
+                           parts[6], parts[7], int(parts[8]))
+                else:                   # old schema — assume U-Shape / window=12
+                    key = (int(parts[2]), float(parts[4]), int(parts[5]),
+                           parts[6], "U-Shape", 12)
+            except (ValueError, IndexError):
+                key = None
+        if key in pairs:
+            removed += 1
+            continue
+        kept.append(line)
+    if removed:
+        with open(iter_csv, "w", encoding="utf-8") as f:
+            f.write(header)
+            f.writelines(kept)
+    return removed
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
@@ -282,9 +374,11 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
 
     for dataset_name, config in dataset_configs.items():
         for model_name in models:
-            print(f"\n=== {dataset_name} / {model_name} ===")
+            use_random_search = model_name in RANDOM_SEARCH_MODELS
+            search_mode = "random_search" if use_random_search else "grid_search"
+            print(f"\n=== {dataset_name} / {model_name} [{search_mode}] ===")
 
-            results_dir = str(_SCRIPT_DIR / "results" / model_name)
+            results_dir = str(_SCRIPT_DIR / "results" / search_mode / model_name)
             os.makedirs(results_dir, exist_ok=True)
             iter_csv = os.path.join(results_dir, f"iteration_results_{dataset_name}.csv")
             avg_csv  = os.path.join(results_dir, f"average_results_{dataset_name}.csv")
@@ -303,15 +397,27 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                     )
 
             completed_combos = _load_completed_combos(avg_csv)
+            windows = _windows_for(dataset_name)
 
-            # Build the pending combo list for this (dataset, model) pair
+            # Build the pending combo list for this (dataset, model) pair.
+            # DLinear/SCINet: full grid. iTransformer/FEDformer: a fixed,
+            # reproducibly-seeded random sample of RANDOM_SEARCH_N points per
+            # pred_len instead of the full 162-point grid.
             combos = []
+            pending_pairs = set()
+            combos_per_pred_len = 0
             for pred_len in config["pred_lens"]:
-                for mask_rate, level, wavelet, lambd, window in product(
-                    MASK_RATES, LEVELS, WAVELETS, LAMBDS, WINDOWS
-                ):
-                    if (pred_len, mask_rate, level, wavelet, lambd, window) in completed_combos:
+                grid_points = list(product(MASK_RATES, LEVELS, WAVELETS, LAMBDS, windows))
+                if use_random_search:
+                    rng = random.Random(f"{dataset_name}_{model_name}_{pred_len}")
+                    grid_points = rng.sample(grid_points, min(RANDOM_SEARCH_N, len(grid_points)))
+                combos_per_pred_len = len(grid_points)
+
+                for mask_rate, level, wavelet, lambd, window in grid_points:
+                    key = (pred_len, mask_rate, level, wavelet, lambd, window)
+                    if key in completed_combos:
                         continue
+                    pending_pairs.add(key)
                     combos.append({
                         "script_dir"         : str(_SCRIPT_DIR),
                         "dataset_name"       : dataset_name,
@@ -331,13 +437,21 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
                         "batch_size_override": BATCH_SIZE_OVERRIDE,
                         "sampling_rate"      : SAMPLING_RATE,
                         "aug_type"           : AUG_TYPE,
+                        "search_mode"        : search_mode,
                     })
 
             if not combos:
                 print(f"  All combos already completed for {dataset_name}/{model_name}.")
                 continue
 
-            combos_per_pred_len = len(list(product(MASK_RATES, LEVELS, WAVELETS, LAMBDS, WINDOWS)))
+            removed = _purge_stale_iterations(iter_csv, pending_pairs)
+            if removed:
+                print(f"  Cleared {removed} stale iteration row(s) for combo(s) being rerun.")
+
+            if use_random_search:
+                print(f"  Random search: {combos_per_pred_len} of "
+                      f"{len(list(product(MASK_RATES, LEVELS, WAVELETS, LAMBDS, windows)))} "
+                      f"grid points per pred_len.")
             total = len(config["pred_lens"]) * combos_per_pred_len
             print(
                 f"  {len(combos)} combos pending, {total - len(combos)} already completed.\n"
@@ -387,7 +501,7 @@ def main(models, epochs, learning_rate, patience, num_iterations, label_len):
 
 if __name__ == "__main__":
     print("Starting main experiment...")
-    models = ["DLinear", "SCINet"]
+    models = ["DLinear", "SCINet", "iTransformer", "FEDformer"]
     main(models, epochs=50, learning_rate=0.01, patience=15, num_iterations=5, label_len=0)
     print("Main experiment finished.")
     print("You can now check results/ and plots/ for outputs.")

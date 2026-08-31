@@ -94,7 +94,14 @@ def train(
     aug = Augmentation()
     early_stopping = EarlyStopping(patience=patience, verbose=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
+    # Clear any checkpoint left over from a previous iteration of this same combo
+    # so a run that diverges before ever saving one can't silently be scored
+    # against a stale, unrelated checkpoint.
+    stale_ckpt = os.path.join(checkpoint_dir, "checkpoint.pth")
+    if os.path.exists(stale_ckpt):
+        os.remove(stale_ckpt)
 
+    diverged = False
     for epoch in range(epochs):
         model.train()
         train_loss = []
@@ -141,6 +148,8 @@ def train(
                     loss = loss + loss_aug / 2
 
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             scaler.step(optimizer)
             scaler.update()
             train_loss.append(loss.item())
@@ -152,6 +161,16 @@ def train(
             f"Train Loss: {train_loss:.7f} Val Loss: {val_loss:.7f}"
         )
 
+        if not np.isfinite(val_loss):
+            # Diverged. NaN/Inf breaks EarlyStopping's comparisons (any
+            # comparison against nan is False, so it would otherwise never
+            # patience-stop and would keep overwriting the checkpoint with
+            # diverged weights every epoch) — bail out now instead of burning
+            # the rest of the epoch budget on a run that's already dead.
+            print(f"Epoch: {epoch + 1}: val_loss is non-finite ({val_loss}) — aborting this run.")
+            diverged = True
+            break
+
         early_stopping(val_loss, model, checkpoint_dir)
         if early_stopping.early_stop:
             print("Early stopping")
@@ -159,8 +178,9 @@ def train(
 
         adjust_learning_rate(optimizer, epoch + 1, lr)
 
-    print(f"Saving final checkpoint to {os.path.join(checkpoint_dir, 'checkpoint.pth')}")
-    torch.save(model.state_dict(), os.path.join(checkpoint_dir, "checkpoint.pth"))
+    if not diverged:
+        print(f"Saving final checkpoint to {os.path.join(checkpoint_dir, 'checkpoint.pth')}")
+        torch.save(model.state_dict(), os.path.join(checkpoint_dir, "checkpoint.pth"))
     return early_stopping.get_val_loss_min()
 
 
