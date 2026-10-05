@@ -47,7 +47,10 @@ class TimeSeriesDataset(Dataset):
         elif self.data_name == "ILI":
             border1s = [0, 676 - self.seq_len, 676 + 97 - self.seq_len]
             border2s = [676, 676 + 97, 676 + 97 + 193]
-        elif self.data_name == "weather":
+        elif self.data_name in ("weather", "exchange_rate"):
+            # Generic 70/15/15 fraction-based split — no dataset-specific
+            # fixed-length convention (unlike ETTh1/ETTh2/ILI above), so any
+            # dataset without one reuses this.
             n = len(df_raw)
             border1s = [
                 0,

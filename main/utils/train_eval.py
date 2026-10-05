@@ -4,8 +4,8 @@ from torch.amp import GradScaler, autocast # type: ignore
 import numpy as np
 import os
 import time
-from wave_freq.utils.aug_method import Augmentation
-from wave_freq.utils.dataset_parameter import dataset_configs
+from main.utils.aug_method import Augmentation
+from main.utils.dataset_parameter import dataset_configs
 
 
 def RSE(pred, true):

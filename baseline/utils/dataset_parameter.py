@@ -1027,4 +1027,90 @@ dataset_configs = {
             },
         },
     },
+    # New dataset — no dedicated hyperparameter search has been run for it
+    # yet, so aug_params below are plain, untuned defaults (same values
+    # repeated across all pred_lens), unlike the other datasets' per-pred_len-
+    # tuned values above. Reasonable to rerun with tuned values later.
+    # data_name="custom" (not "exchange_rate") reuses the same generic
+    # 60/20/20 fraction-based train/val/test split already used for ILI —
+    # dataloader.py needs no changes for this.
+    "exchange_rate": {
+        "data_path": f"{_DATASET_DIR}/exchange_rate.csv",
+        "data_name": "custom",
+        "seq_len": 336,
+        "enc_in": 8,
+        "batch_size": 32,
+        "pred_lens": [96, 192, 336, 720],
+        "aug_types": [
+            "None",
+            "Freq-Mask",
+            "Freq-Mix",
+            "Wave-Mask",
+            "Wave-Mix",
+            "StAug",
+            "Dominant-Shuffle",
+        ],
+        "aug_params": {
+            pred_len: {
+                "None": {
+                    "aug_rate": 0.0,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                },
+                "Freq-Mask": {
+                    "aug_rate": 0.1,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                },
+                "Freq-Mix": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                },
+                "Wave-Mask": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                },
+                "Wave-Mix": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                },
+                "Dominant-Shuffle": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                    "k": 4,
+                },
+                "StAug": {
+                    "aug_rate": 0.5,
+                    "rates": [0.5, 0.3, 0.1],
+                    "wavelet": "db2",
+                    "level": 2,
+                    "sampling_rate": 0.2,
+                    "n_imf": 10,
+                },
+            }
+            for pred_len in [96, 192, 336, 720]
+        },
+    },
 }

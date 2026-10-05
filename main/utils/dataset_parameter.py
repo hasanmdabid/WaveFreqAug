@@ -1,3 +1,6 @@
+import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 dataset_configs = {
     "ETTh1": {
         "data_path": "/home/abidhasan/Document/Project/WaveFreqAug_Forecasting/dataset/ETTh1.csv",
@@ -171,5 +174,28 @@ dataset_configs = {
             },
         },
     },
-    # Add other datasets as needed
+    # New dataset — aug_params below are unused by main/main.py (its grid/
+    # random search builds hyperparameter combos from the MASK_RATES/LEVELS/
+    # WAVELETS/LAMBDS/WINDOWS constants directly, not from this dict) and are
+    # only kept here for schema consistency with the other datasets.
+    "exchange_rate": {
+        "data_path": "/home/abidhasan/Document/Project/WaveFreqAug_Forecasting/dataset/exchange_rate.csv",
+        "data_name": "exchange_rate",
+        "seq_len": 336,
+        "pred_lens": [96, 192, 336, 720],
+        "enc_in": 8,
+        "batch_size": 32,
+        "aug_types": ["Wave-Freq"],
+        "aug_params": {
+            pred_len: {
+                "Wave-Freq": {
+                    "mask_rate": 0.3,
+                    "wavelet": "db2",
+                    "level": 3,
+                    "sampling_rate": 0.2,
+                }
+            }
+            for pred_len in [96, 192, 336, 720]
+        },
+    },
 }
