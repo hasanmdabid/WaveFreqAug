@@ -11,35 +11,50 @@
 The augmented residual is recomposed with the trend and then linearly mixed with the original sample using a Beta(0.5, 0.5) coefficient. This produces augmented training samples that preserve long-range structure while diversifying high-frequency variation.
 
 This repository provides:
-- The proposed **WaveFreqAug** method with full 5D hyperparameter grid search (`wave_freq/`).
-- Reproductions of **six baseline augmentation methods** for fair comparison (`baseline/`): No Augmentation, Freq-Mask, Freq-Mix, Wave-Mask, Wave-Mix, STAug, and Dominant-Shuffle.
-- An **ablation study** that isolates the contribution of each algorithmic component (`wave_freq/ablation_study/`).
-- **Comparison visualizations** including MSE heatmaps, win-rate charts, styled line plots, pairwise scatter plots, and a Critical Difference diagram (`result_analysis/`).
+- The proposed **WaveFreqAug** method, evaluated across **six forecasting models** via hyperparameter search (`main/`).
+- Reproductions of **six baseline augmentation methods** for fair comparison (`baseline/`): No Augmentation, Freq-Mask, Freq-Mix, Wave-Mask, Wave-Mix, StAug, and Dominant-Shuffle.
 
 ---
 
 ## Algorithm: WaveFreqAug
 
 ```
-Input:  x (batch_size, seq_len, enc_in)
-        y (batch_size, pred_len, enc_in)
+Require:  Time series X = [x; y] ∈ R^(T × C) (concatenation of the look-back
+          window x and the forecast horizon y), window size w, decomposition
+          level L, wavelet type W, base masking rate m_r, ratio top_k_ratio,
+          mixing strategy λ_mode ∈ {U-Shape, uniform}
+Ensure:   Augmented series x_aug ∈ R^(T × C) (the augmented input and
+          augmented label are recovered by splitting x_aug at T_in)
 
-1.  Concatenate x and y along the time axis → xy (batch_size, total_len, enc_in)
-2.  For each sample b and channel c:
-    a. Compute moving-average trend with window W; residual = series - trend
-    b. Apply pywt.wavedec(residual, wavelet, level=L) →
-          approx (approximation coefficients)
-          details[0..L-1] (detail coefficients per sub-band)
-    c. Fourier enhancement on approx:
-          FFT → amplify top top_k_ratio fraction of frequencies by 1.2× → IFFT
-    d. Adaptive masking on each detail[i]:
-          energy  = mean(|detail[i]|)
-          adapted_mask_rate = mask_rate × (1 - energy / max(|detail[i]|))
-          FFT → zero-out adapted_mask_rate fraction of frequencies → IFFT
-    e. Reconstruct residual via pywt.waverec([approx] + details, wavelet)
-    f. Recompose: xy_aug[b,:,c] = trend + reconstructed_residual
-3.  λ ~ Beta(0.5, 0.5)  [or Uniform(0,1) for "uniform" mode]
-4.  Return λ × xy_aug + (1 − λ) × xy
+Step 1 — Trend decomposition (causal moving average):
+    τ_t ← (1/w) · Σ_{i=t-w+1}^{t} X_i,   t = 1, ..., T
+        # backward-looking only — no future (label-side) value ever enters τ
+    r ← X − τ
+
+Step 2 — Wavelet decomposition:
+    [A_L, D_L, D_{L-1}, ..., D_1] ← DWT(r, L, W)
+
+Step 3 — Adaptive masking on detail coefficients, for l = 1 to L:
+    M_l ← mean(|D_l|)                                    # mean magnitude
+    P_l ← max(|D_l|)                                      # peak magnitude
+    m_l ← m_r · (1 − M_l / P_l)  if P_l > 0,  else 0       # adaptive rate
+    F_d ← FFT(D_l)
+    F_d'[f] ← 0 with probability m_l, else F_d[f]
+    D_l' ← Re{ IFFT(F_d') }
+
+Step 4 — Fourier enhancement of the approximation:
+    F_a ← FFT(A_L)
+    k ← |F_a| · top_k_ratio
+    F_a'[top_k_indices] ← F_a[top_k_indices] × α
+    A_L' ← Re{ IFFT(F_a') }
+
+Step 5 — Reconstruction and mixing:
+    r' ← IDWT([A_L', D_L', D_{L-1}', ..., D_1'], W)
+    x' ← τ + r'
+    λ ~ Beta(0.5, 0.5)  if λ_mode = U-Shape,  else  λ ~ Uniform(0, 1)
+    x_aug ← λ · x' + (1 − λ) · X
+
+Return x_aug
 ```
 
 During training, the augmented loss is blended with the original loss:
@@ -56,50 +71,43 @@ Only a `sampling_rate` fraction of each batch is augmented per step, keeping com
 
 ```
 WaveFreqAug_Forecasting/
-├── dataset/                          # CSV datasets (not tracked by git)
+├── dataset/                           # CSV datasets (not tracked by git)
 │   ├── ETTh1.csv
 │   ├── ETTh2.csv
 │   ├── national_illness.csv
-│   └── weather.csv
+│   ├── weather.csv
+│   └── exchange_rate.csv
 │
-├── wave_freq/                        # Proposed WaveFreqAug method
-│   ├── main.py                       # Entry point: parallel 5D grid search
-│   ├── utils/
-│   │   ├── aug_method.py             # WaveFreqAug core implementation
-│   │   ├── train_eval.py             # Training loop, validation, test (mixed precision)
-│   │   ├── model.py                  # DLinear, SCINet, iTransformer
-│   │   ├── dataloader.py             # TimeSeriesDataset
-│   │   └── dataset_parameter.py     # Dataset configs (absolute paths — update these)
-│   ├── ablation_study/
-│   │   ├── aug_method_ablation.py   # Three augmentation variants for ablation
-│   │   ├── ablation_main.py         # Ablation experiment runner
-│   │   └── result/                  # Ablation CSVs per model
-│   ├── checkpoints/                  # Saved model weights (per hyperparameter combo)
-│   ├── results/                      # (legacy) per-run CSVs
-│   └── plots/                        # Prediction plots
-│
-├── baseline/                         # Baseline augmentation methods
-│   ├── base_main.py                  # Baseline experiment entry point
+├── main/                               # Proposed WaveFreqAug method
+│   ├── main.py                         # Entry point: parallel random/grid hyperparameter search
+│   ├── checkpoints/                    # Saved model weights (per hyperparameter combo)
+│   ├── plots/                          # Prediction plots
+│   ├── results/
+│   │   ├── grid_search/{model}/        # Full 5D grid-search results (DLinear/SCINet, legacy run)
+│   │   └── random_search/{model}/      # Random-search results (all six models)
 │   └── utils/
-│       ├── aug_methods.py            # Freq-Mask, Freq-Mix, Wave-Mask, Wave-Mix, STAug, Dominant-Shuffle
-│       ├── train_eval.py             # Training loop for baselines
-│       ├── model.py                  # Same three forecast models
-│       ├── dataloader.py             # Same dataset loader
-│       └── dataset_parameter.py     # Dataset configs for baselines
+│       ├── aug_method.py               # WaveFreqAug core implementation
+│       ├── train_eval.py               # Training loop, validation, test (mixed precision)
+│       ├── model.py                    # DLinear, SCINet, iTransformer, FEDformer, TiDE, PatchTST
+│       ├── dataloader.py               # TimeSeriesDataset
+│       ├── dataset_parameter.py        # Dataset configs (absolute paths — update these)
+│       └── helper.py                   # Shared per-combo train/eval loop + resume logic
 │
-├── results/
-│   ├── baseline/{model}/            # Baseline experiment CSVs
-│   └── wavefreq/{model}/            # WaveFreqAug experiment CSVs
+├── baseline/                           # Baseline augmentation methods
+│   ├── base_main.py                    # Baseline experiment entry point
+│   ├── checkpoints/                    # Saved model weights (per combo)
+│   ├── plots/                          # Prediction plots
+│   ├── results/{model}/                # Baseline experiment CSVs (six models)
+│   └── utils/
+│       ├── aug_methods.py              # Freq-Mask, Freq-Mix, Wave-Mask, Wave-Mix, StAug, Dominant-Shuffle
+│       ├── train_eval.py               # Training loop for baselines
+│       ├── model.py                    # Same six forecast models
+│       ├── dataloader.py               # Same dataset loader
+│       ├── dataset_parameter.py        # Dataset configs for baselines
+│       └── helper.py                   # Shared per-combo train/eval loop + resume logic
 │
-├── result_analysis/
-│   ├── plotting_mse_comparison.py   # All comparison figures (heatmap, bar, scatter, CD)
-│   ├── result_analysis.ipynb        # Post-experiment metric aggregation notebook
-│   ├── plotting_Signal_evaluation.ipynb  # Signal-level prediction visualization
-│   └── analysis/                    # Generated figures (PNG/PDF) and win-count CSVs
-│
-├── wave_aug/                         # Python virtual environment (not tracked)
+├── wave_aug/                           # Python virtual environment (not tracked)
 ├── requirements.txt
-├── CLAUDE.md
 └── README.md
 ```
 
@@ -125,7 +133,7 @@ pip install -r requirements.txt
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 ```
 
-> **Note:** CUDA is required at runtime. `wave_freq/utils/train_eval.py` hardcodes `GradScaler("cuda")` and `autocast(device_type="cuda")`.
+> **Note:** CUDA is required at runtime. `main/utils/train_eval.py` hardcodes `GradScaler("cuda")` and `autocast(device_type="cuda")`.
 
 ---
 
@@ -154,10 +162,10 @@ All splits are scaled using `StandardScaler` fitted on the training portion only
 
 ## Path Configuration
 
-`wave_freq/utils/dataset_parameter.py` and `baseline/utils/dataset_parameter.py` contain **hardcoded absolute paths**. Update the `data_path` entries before running on any machine:
+`main/utils/dataset_parameter.py` and `baseline/utils/dataset_parameter.py` contain **hardcoded absolute paths**. Update the `data_path` entries before running on any machine:
 
 ```python
-# wave_freq/utils/dataset_parameter.py
+# main/utils/dataset_parameter.py
 dataset_configs = {
     "ETTh1": {
         "data_path": "/your/path/to/dataset/ETTh1.csv",
@@ -172,11 +180,11 @@ dataset_configs = {
 ## Running WaveFreqAug Experiments
 
 ```bash
-cd wave_freq
+cd main
 python main.py
 ```
 
-`main.py` launches a `multiprocessing.Pool` with `NUM_WORKERS_POOL = 8` parallel workers (spawn context, `maxtasksperchild=1` for CUDA safety). Already-completed hyperparameter combinations are skipped automatically by checking for the checkpoint file.
+`main.py` launches a `multiprocessing.Pool` of parallel workers (spawn context, `maxtasksperchild=1` for CUDA safety). Already-completed hyperparameter combinations are skipped automatically by checking for a row in the model's `average_results_{dataset}.csv`.
 
 ### Hyperparameter Grid (5D, 486 combos per dataset/model/horizon)
 
@@ -203,7 +211,7 @@ To limit VRAM usage with multiple workers sharing one GPU, set `BATCH_SIZE_OVERR
 | Mixed precision | `torch.amp` (fp16 on CUDA) |
 | Early stopping patience | 5 epochs |
 | Batch size | 32 |
-| Iterations per combo | 5 (reported as mean ± std) |
+| Iterations per combo | 3 (reported as mean ± std) |
 
 ---
 
@@ -228,45 +236,16 @@ Evaluates six SOTA augmentation strategies across all datasets and models:
 
 ---
 
-## Ablation Study
-
-The ablation study tests the contribution of each algorithmic component by selectively removing it, using the best hyperparameters found in the grid search for each `(dataset, model, pred_len)` combination.
-
-```bash
-cd wave_freq
-python ablation_study/ablation_main.py
-```
-
-| Variant | Fourier Enhancement | Adaptive Masking |
-|---|---|---|
-| `WaveFreqAug-NoFourier` | ❌ removed | ✅ kept |
-| `WaveFreqAug-NoMasking` | ✅ kept | ❌ removed |
-
-Results are saved to `wave_freq/ablation_study/result/{model}/average_results_{dataset}.csv`. Compare against the full WaveFreqAug numbers in `results/wavefreq/`.
-
----
-
 ## Forecast Models
 
-Three models are implemented identically in `wave_freq/utils/model.py` and `baseline/utils/model.py`:
+Six models are implemented identically in `main/utils/model.py` and `baseline/utils/model.py`:
 
-### DLinear
-Decomposition-Linear. Applies moving-average decomposition then fits separate linear layers to the trend and seasonal components per channel.
-```
-seq_len=336, kernel_size=25, individual=False
-```
-
-### SCINet
-Sample Convolution and Interaction Network. Recursively downsamples into even/odd sub-sequences, applies cross-interaction convolutions, and concatenates for the forecast.
-```
-hid_size=1, num_stacks=1, num_levels=3, kernel_size=5, dropout=0.2
-```
-
-### iTransformer
-Inverted Transformer. Applies self-attention across the channel dimension (each token is one variable's full sequence) rather than the time dimension.
-```
-d_model=512, n_heads=8, e_layers=4, d_ff=2048, dropout=0.1
-```
+- **DLinear** — Zeng, A. et al. (2023). *Are Transformers Effective for Time Series Forecasting?* AAAI 2023.
+- **SCINet** — Liu, M. et al. (2022). *SCINet: Time Series Modeling and Forecasting with Sample Convolution and Interaction Networks*. NeurIPS 2022.
+- **iTransformer** — Liu, Y. et al. (2024). *iTransformer: Inverted Transformers Are Effective for Time Series Forecasting*. ICLR 2024.
+- **FEDformer** — Zhou, T. et al. (2022). *FEDformer: Frequency Enhanced Decomposed Transformer for Long-term Series Forecasting*. ICML 2022.
+- **TiDE** — Das, A. et al. (2023). *Long-term Forecasting with TiDE: Time-series Dense Encoder*. arXiv:2304.08424.
+- **PatchTST** — Nie, Y. et al. (2023). *A Time Series is Worth 64 Words: Long-term Forecasting with Transformers*. ICLR 2023.
 
 ---
 
@@ -275,9 +254,9 @@ d_model=512, n_heads=8, e_layers=4, d_ff=2048, dropout=0.1
 ### WaveFreqAug results
 
 ```
-results/wavefreq/{model}/
+main/results/{grid_search|random_search}/{model}/
 ├── iteration_results_{dataset}.csv   # per-iteration metrics
-└── average_results_{dataset}.csv     # mean ± std across 5 iterations
+└── average_results_{dataset}.csv     # mean ± std across iterations
 ```
 
 **CSV schema (17 columns):**
@@ -288,51 +267,18 @@ val_loss, mae, mse, rse, mae_std, mse_std, rse_std, exec_time
 
 Checkpoints:
 ```
-wave_freq/checkpoints/{dataset}_Wave-Freq_{pred_len}_{model}_{mask_rate}_{level}_{wavelet}_{lambd}_{window}/checkpoint.pth
+main/checkpoints/{grid_search|random_search}/{dataset}_Wave-Freq_{pred_len}_{model}_{mask_rate}_{level}_{wavelet}_{lambd}_{window}/checkpoint.pth
 ```
 
 ### Baseline results
 
 ```
-results/baseline/{model}/
+baseline/results/{model}/
 ├── iteration_results_{dataset}.csv
 └── average_results_{dataset}.csv
 ```
 
 Same 17-column schema; `mask_rate`, `level`, `wavelet`, `lambd`, `window` are set to `N/A`.
-
-### Ablation results
-
-```
-wave_freq/ablation_study/result/{model}/
-├── iteration_results_{dataset}.csv
-└── average_results_{dataset}.csv
-```
-
-Same schema with `aug_variant` in place of `aug_type`.
-
----
-
-## Analysis and Figures
-
-```bash
-# Update base_dir at the top of the script to point to the local results/ directory
-cd result_analysis
-python plotting_mse_comparison.py
-```
-
-Generates per-model figures in `result_analysis/analysis/`:
-
-| Figure | Description |
-|---|---|
-| `mse_comparison_heatmap_{dataset}_{model}` | % MSE change vs no-augmentation baseline |
-| `mse_pct_improvement_{model}` | Grouped bar chart of % MSE improvement |
-| `win_rate_{model}` | Stacked win/tie/loss bar chart vs baseline |
-| `fancy_lineplot_{model}` | Styled MSE vs prediction horizon per dataset |
-| `scatter_vs_sota_{model}` | Pairwise scatter: WaveFreqAug vs each SOTA method |
-| `cd_diagram_{model}` | Critical Difference diagram (Demšar 2006, Wilcoxon + Holm α=0.05) |
-
-Win-count summaries are saved to `result_analysis/analysis/scatter_win_summary_{model}.csv`.
 
 ---
 
@@ -351,7 +297,7 @@ All metrics are computed on inverse-transformed (original scale) predictions.
 ## Integrating WaveFreqAug into Your Own Training Loop
 
 ```python
-from wave_freq.utils.aug_method import Augmentation
+from main.utils.aug_method import Augmentation
 
 aug = Augmentation()
 
@@ -382,3 +328,6 @@ y_aug = xy_aug[:, seq_len:, :]
 - **DLinear** — Zeng, A. et al. (2023). *Are Transformers Effective for Time Series Forecasting?* AAAI 2023.
 - **SCINet** — Liu, M. et al. (2022). *SCINet: Time Series Modeling and Forecasting with Sample Convolution and Interaction Networks*. NeurIPS 2022.
 - **iTransformer** — Liu, Y. et al. (2024). *iTransformer: Inverted Transformers Are Effective for Time Series Forecasting*. ICLR 2024.
+- **FEDformer** — Zhou, T. et al. (2022). *FEDformer: Frequency Enhanced Decomposed Transformer for Long-term Series Forecasting*. ICML 2022.
+- **TiDE** — Das, A. et al. (2023). *Long-term Forecasting with TiDE: Time-series Dense Encoder*. arXiv:2304.08424.
+- **PatchTST** — Nie, Y. et al. (2023). *A Time Series is Worth 64 Words: Long-term Forecasting with Transformers*. ICLR 2023.
