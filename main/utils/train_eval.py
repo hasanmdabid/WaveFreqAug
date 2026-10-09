@@ -108,8 +108,6 @@ def train(
         epoch_time = time.time()
 
         for batch_x, batch_y in train_loader:
-            # Keep float32 CPU copies to feed augmentation without a GPU→CPU round-trip.
-            # The async non_blocking transfer lets CPU aug and GPU data load overlap.
             batch_x_cpu = batch_x.float()
             batch_y_cpu = batch_y.float()
             batch_x = batch_x_cpu.to(device, non_blocking=True)
@@ -162,11 +160,7 @@ def train(
         )
 
         if not np.isfinite(val_loss):
-            # Diverged. NaN/Inf breaks EarlyStopping's comparisons (any
-            # comparison against nan is False, so it would otherwise never
-            # patience-stop and would keep overwriting the checkpoint with
-            # diverged weights every epoch) — bail out now instead of burning
-            # the rest of the epoch budget on a run that's already dead.
+
             print(f"Epoch: {epoch + 1}: val_loss is non-finite ({val_loss}) — aborting this run.")
             diverged = True
             break

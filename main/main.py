@@ -34,8 +34,7 @@ NUM_WORKERS_POOL = 16
 
 # Each worker process defaults to using every CPU core for its BLAS/OMP thread
 # pool; with NUM_WORKERS_POOL of them running at once that oversubscribes the
-# machine and starves the GPU feed loop (symptom: near-0% GPU util despite
-# multiple workers "running"). Cap each worker to a fair share of the cores instead.
+# machine and starves the GPU feed loop. 
 CPU_THREADS_PER_WORKER = max(1, (os.cpu_count() or NUM_WORKERS_POOL) // NUM_WORKERS_POOL)
 # Must be set before numpy/torch import so their BLAS/OMP backends pick it
 # up at init — otherwise each worker defaults to using every CPU core and
@@ -52,14 +51,7 @@ WAVELETS   = ["db2", "db4", "sym4"]
 LAMBDS     = ["U-Shape", "uniform"]
 WINDOWS    = [6, 12, 24]
 
-# main/utils/aug_method.py's trend (Eq. 1) is now a CAUSAL (backward-looking
-# only) moving average, so no window size leaks future information into the
-# augmented input for any dataset (Reviewer 1, Comment 4) — verified: trend[t]
-# never depends on values past position t, for any window. ILI still keeps a
-# smaller, dedicated window range here regardless, since its 36-step look-back
-# is short enough that even a leak-free large window (e.g. w=24) would average
-# over two-thirds of the whole sequence, which is undesirable on its own
-# terms, separate from the (now-resolved) causality concern.
+
 WINDOWS_ILI = [2, 4, 6]
 
 def _windows_for(dataset_name: str) -> list:
@@ -67,16 +59,7 @@ def _windows_for(dataset_name: str) -> list:
 
 
 # ─── Random search ───────────────────────────────────────────────────────────
-# Full grid search (162 points per pred_len) was originally run in full for
-# DLinear/SCINet (results/grid_search/) and was impractical for iTransformer/
-# FEDformer given their much higher per-combo cost, so those two started on
-# random search from the outset (results/random_search/). Random search over
-# the same discrete grid is at least as sample-efficient in practice (Bergstra
-# & Bengio, 2012) and fits the differing-tuning-budget disclosure already made
-# in Supplementary Note 2. DLinear/SCINet's existing grid results are kept
-# as-is; this script now additionally runs random search for them too (a
-# separate, independently-tracked result set under results/random_search/),
-# so all four models are evaluated with random search.
+
 RANDOM_SEARCH_MODELS = {"DLinear", "SCINet", "iTransformer", "FEDformer", "TiDE", "PatchTST"}
 RANDOM_SEARCH_N = 20
 

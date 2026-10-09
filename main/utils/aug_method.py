@@ -1,18 +1,5 @@
 # pylint: disable=too-many-arguments, too-many-locals, too-many-branches, too-many-statements, C0200:consider-using-enumerate, lintE0401:import-error
-#
-# Trend computation is a CAUSAL (backward-looking only) moving average
-# (Reviewer 1, Comment 4). The original centered moving average
-# (np.convolve(..., mode="same")) reads up to floor(window/2) future samples
-# at every position, so the trend at input positions near the input/horizon
-# boundary was computed using genuine future (label) values — a real
-# causality violation regardless of dataset or window size. Here the trend at
-# position t is the average of only series[t-window+1 : t+1] (edge-replicated
-# at the start), so no future information ever enters the augmented input,
-# for any window in WINDOWS/WINDOWS_ILI. Everything else in the augmentation
-# pipeline (wavelet decomposition, Fourier amplification, adaptive masking,
-# mixing) is unchanged. Previously validated in isolation as
-# main/without_leakage/utils/aug_method.py; now the trend computation used by
-# main/main.py's random search itself.
+
 
 import torch
 import numpy as np
