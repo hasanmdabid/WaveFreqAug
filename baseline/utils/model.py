@@ -324,34 +324,9 @@ class SCINet(nn.Module):
         super(SCINet, self).__init__()
         assert num_stacks in (1, 2), "SCINet supports 1 or 2 stacks only"
         self.input_dim = input_dim
-        # The official architecture anchors every forecast on the single raw
-        # last context timestep (`x[:, -1:, :]`) — see forward() below. Local
-        # transforms (moving-average trend, wavelet reconstruction) used by
-        # this project's WaveFreqAug are measurably less accurate right at
-        # sequence boundaries than at interior points (verified empirically:
-        # ~2.4x larger reconstruction error at the last context step than at
-        # an interior one on real ETTh1 batches), and since that one value is
-        # added back, raw and uncorrected, into every forecasted step, SCINet
-        # is disproportionately exposed to that boundary noise in a way
-        # DLinear/iTransformer/FEDformer's whole-window decomposition/
-        # normalization are not. Averaging over a short trailing window
-        # instead of a single point dilutes that boundary noise back down to
-        # roughly interior-point levels (also verified empirically: k=8 cuts
-        # the augmentation-induced anchor shift from 0.023 to 0.010, matching
-        # the ~0.011 baseline at an interior point) while still representing
-        # "the current local level" faithfully. This changes only where the
-        # anchor value comes from, not the architecture's use of it or any
-        # other model/hyperparameter/augmentation code.
+
         self.anchor_window = max(1, anchor_window)
 
-        # Every recursive odd/even split in SCINet_Tree must land on an even
-        # length all the way down to the leaves, i.e. input_len must be an
-        # exact multiple of 2**num_levels (the official implementation
-        # asserts this rather than handling shorter inputs). Left-pad by
-        # repeating the first real time step so the true most-recent step —
-        # used below for the last-value residual — is unaffected. ILI's
-        # seq_len=36 needs this (36 is not a multiple of 2**3=8); ETTh1/ETTh2/
-        # weather's seq_len=336 already is and this is a no-op for them.
         pad_unit = 2**num_levels
         self.padded_input_len = ((input_len + pad_unit - 1) // pad_unit) * pad_unit
         self.pad_amount = self.padded_input_len - input_len
@@ -744,29 +719,7 @@ class FEDformer(nn.Module):
 # TiDE (Time-series Dense Encoder, Das et al. 2023; https://arxiv.org/abs/2304.08424)
 # matching https://github.com/zuojie2024/dominant-shuffle/blob/main/models/TiDE.py
 # (the version used to produce the Dominant-Shuffle baseline this project
-# compares against). Channel-independent MLP dense encoder-decoder: each
-# channel is normalized (whole-window mean/std, like iTransformer — no
-# single-point anchor, so it doesn't share SCINet's augmentation-boundary
-# sensitivity), encoded through a stack of residual MLP blocks into a fixed
-# embedding, decoded into per-step features, refined by a per-step temporal
-# decoder, and combined with a linear residual projection of the raw input.
-# Two deliberate adaptations from the reference:
-#   1. The reference also encodes calendar/time covariates (hour, weekday,
-#      month, ...) via a separate feature encoder and concatenates them into
-#      the encoder/temporal-decoder inputs. This project's TimeSeriesDataset
-#      (shared by every model here) doesn't extract or expose timestamp
-#      covariates at all, and adding that would mean changing the shared
-#      dataloader for every existing model — out of scope for adding one
-#      model. The covariate path is dropped entirely; the core dense
-#      encoder-decoder-with-residual mechanism (TiDE's actual architectural
-#      contribution) is unchanged.
-#   2. The reference builds repeated ResBlock stacks with `[block] * (n-1)`,
-#      a Python list-of-references gotcha: for n-1 >= 2 this reuses the same
-#      single ResBlock instance multiple times instead of building distinct
-#      layers, so anything deeper than 2 encoder/decoder layers silently
-#      loses its intended depth. Built here with a list comprehension
-#      instead so each layer is an independently-parameterized module — the
-#      stack's clear intent, not its Python quirk.
+# compares against).
 class TiDEResBlock(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, dropout=0.1, bias=True):
         super(TiDEResBlock, self).__init__()
@@ -828,20 +781,7 @@ class TiDE(nn.Module):
 # ------------------------------------------------------------Model 6----------------------------------------------------------------------------------------
 # PatchTST (Nie et al., ICLR 2023; https://github.com/yuqinie98/PatchTST,
 # PatchTST_supervised/{models/PatchTST.py, layers/PatchTST_backbone.py,
-# layers/PatchTST_layers.py, layers/RevIN.py}). Channel-independent Transformer
-# over non-overlapping/overlapping patches of the input window rather than raw
-# timesteps: RevIN-normalize the whole window, split it into patches, embed
-# each patch as a single Transformer "token" (so attention mixes across
-# patches, not across raw timesteps — a much shorter, more informative
-# sequence for the encoder to attend over), then flatten the patch embeddings
-# through a linear head into the forecast and reverse the RevIN normalization.
-# Ported with the `configs` Namespace flattened into plain kwargs (same
-# adaptation as SCINet/TiDE above), the self-supervised pretraining head and
-# padding-mask machinery dropped (unused in this project's plain supervised
-# setup), and the reference's own `moving_avg`/`series_decomp` (used only by
-# the optional trend/residual decomposition variant) replaced by this file's
-# existing, functionally identical `MovingAvg`/`SeriesDecomp` rather than
-# duplicating them.
+# layers/PatchTST_layers.py, layers/RevIN.py}). 
 class RevIN(nn.Module):
     """Reversible Instance Normalization (Kim et al., ICLR 2022), as used by PatchTST."""
     def __init__(self, num_features, eps=1e-5, affine=True, subtract_last=False):

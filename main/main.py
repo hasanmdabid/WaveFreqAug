@@ -1,3 +1,8 @@
+# This script is written and organized by Md Abid Hasan towards the project WaveFreqAug.
+# This is script for training and evaluating time series forecasting models with
+# various data augmentation techniques.
+# =========================================================================================
+
 import os, sys, pathlib,torch, random
 import torch.multiprocessing as mp
 from itertools import product
@@ -34,7 +39,7 @@ NUM_WORKERS_POOL = 16
 
 # Each worker process defaults to using every CPU core for its BLAS/OMP thread
 # pool; with NUM_WORKERS_POOL of them running at once that oversubscribes the
-# machine and starves the GPU feed loop. 
+# machine and starves the GPU feed loop.
 CPU_THREADS_PER_WORKER = max(1, (os.cpu_count() or NUM_WORKERS_POOL) // NUM_WORKERS_POOL)
 # Must be set before numpy/torch import so their BLAS/OMP backends pick it
 # up at init — otherwise each worker defaults to using every CPU core and
