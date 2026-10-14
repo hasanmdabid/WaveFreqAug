@@ -148,7 +148,7 @@ Download the following datasets and place the CSV files in `dataset/`:
 | ILI (Illness) | `national_illness.csv` | 7 | Weekly |
 | Weather | `weather.csv` | 21 | 10-minute |
 
-Standard train/val/test splits:
+<!-- Standard train/val/test splits:
 
 | Dataset | Train | Val | Test |
 |---|---|---|---|
@@ -158,7 +158,7 @@ Standard train/val/test splits:
 
 All splits are scaled using `StandardScaler` fitted on the training portion only.
 
----
+--- -->
 
 ## Path Configuration
 
@@ -186,7 +186,7 @@ python main.py
 
 `main.py` launches a `multiprocessing.Pool` of parallel workers (spawn context, `maxtasksperchild=1` for CUDA safety). Already-completed hyperparameter combinations are skipped automatically by checking for a row in the model's `average_results_{dataset}.csv`.
 
-### Hyperparameter Grid (5D, 486 combos per dataset/model/horizon)
+<!-- ### Hyperparameter Grid (5D, 486 combos per dataset/model/horizon)
 
 | Parameter | Values |
 |---|---|
@@ -198,9 +198,9 @@ python main.py
 
 `SAMPLING_RATE = 0.2` is fixed (batch-subsample fraction and `top_k_ratio`).
 
-To limit VRAM usage with multiple workers sharing one GPU, set `BATCH_SIZE_OVERRIDE` at the top of `main.py` (e.g., `16` or `8`).
+To limit VRAM usage with multiple workers sharing one GPU, set `BATCH_SIZE_OVERRIDE` at the top of `main.py` (e.g., `16` or `8`). -->
 
-### Training Hyperparameters
+<!-- ### Training Hyperparameters
 
 | Parameter | Value |
 |---|---|
@@ -213,7 +213,7 @@ To limit VRAM usage with multiple workers sharing one GPU, set `BATCH_SIZE_OVERR
 | Batch size | 32 |
 | Iterations per combo | 3 (reported as mean ± std) |
 
----
+--- -->
 
 ## Running Baseline Experiments
 
