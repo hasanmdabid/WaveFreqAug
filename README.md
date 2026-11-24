@@ -320,14 +320,12 @@ y_aug = xy_aug[:, seq_len:, :]
 
 ---
 
-## Baseline Method References
+## Published Paper link
 
-- **Freq-Mask / Freq-Mix** — Chen, M., Xu, Z., Zeng, A., & Xu, Q. (2023). *FrAug: Frequency Domain Augmentation for Time Series Forecasting*. arXiv:2302.09292.
-- **Wave-Mask / Wave-Mix** — Bakhshaliyev et al. *Wave-Augs*. [github.com/jafarbakhshaliyev/Wave-Augs](https://github.com/jafarbakhshaliyev/Wave-Augs)
-- **StAug** — Zhang, X. et al. *STAug*. [github.com/xiyuanzh/STAug](https://github.com/xiyuanzh/STAug)
-- **DLinear** — Zeng, A. et al. (2023). *Are Transformers Effective for Time Series Forecasting?* AAAI 2023.
-- **SCINet** — Liu, M. et al. (2022). *SCINet: Time Series Modeling and Forecasting with Sample Convolution and Interaction Networks*. NeurIPS 2022.
-- **iTransformer** — Liu, Y. et al. (2024). *iTransformer: Inverted Transformers Are Effective for Time Series Forecasting*. ICLR 2024.
-- **FEDformer** — Zhou, T. et al. (2022). *FEDformer: Frequency Enhanced Decomposed Transformer for Long-term Series Forecasting*. ICML 2022.
-- **TiDE** — Das, A. et al. (2023). *Long-term Forecasting with TiDE: Time-series Dense Encoder*. arXiv:2304.08424.
-- **PatchTST** — Nie, Y. et al. (2023). *A Time Series is Worth 64 Words: Long-term Forecasting with Transformers*. ICLR 2023.
+https://www.nature.com/articles/s41598-026-77825-7
+
+---
+
+## To Cite our work 
+
+Hasan, M.A., Huang, X., Li, F., Koch, P., Maass, M., Zhang, Y. and Grzegorzek, M., 2026. Wavelet guided frequency-domain augmentation for robust time series forecasting. Scientific Reports, 16(1), p.37839.
